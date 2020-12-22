@@ -7,7 +7,7 @@ hparams:
   done_loss: 0
 
 env:
-  checkpoint_path: /workspace/src/env_model/epoch=711.ckpt
+  checkpoint_path: /workspace/src/env_model/epoch=1039.ckpt
 
 agent:
   gpu: 0

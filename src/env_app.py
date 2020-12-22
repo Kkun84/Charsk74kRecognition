@@ -14,7 +14,7 @@ from src.env import PatchSetsClassificationEnv
 import src.env_model
 
 
-device = 'cpu'
+device = 'cuda'
 
 
 @st.cache(allow_output_mutation=True)
@@ -76,7 +76,7 @@ def predict_all_pach(
 
 
 def one_step(env, patch_size: int, image: Tensor, target: int, step: int):
-    col_loss_map, col_loss_dataflame, col_patch_select = st.beta_columns([2, 1, 1])
+    col_loss_map, col_loss_dataflame, col_patch_select = st.beta_columns([4, 3, 2])
 
     with col_loss_map:
         if step == 0:
@@ -121,6 +121,13 @@ def one_step(env, patch_size: int, image: Tensor, target: int, step: int):
                 x=loss_ranking_x.detach().cpu(),
                 y=loss_ranking_y.detach().cpu(),
                 loss=loss_sorted.detach().cpu(),
+                **{
+                    alphabet: data
+                    for alphabet, data in zip(
+                        env.dataset.unique_alphabet,
+                        predicted_all.softmax(1).T.detach().cpu(),
+                    )
+                },
             ),
         )
         st.dataframe(df)
@@ -144,7 +151,11 @@ def one_step(env, patch_size: int, image: Tensor, target: int, step: int):
         action = action_x + action_y * (image.shape[2] - patch_size + 1)
 
         _, _, done, _ = env.step(action)
-        st.image(to_pil_image(env.trajectory['patch'][-1].cpu()).resize((200, 200)))
+        st.image(
+            to_pil_image(env.trajectory['patch'][-1].cpu()),
+            use_column_width=True,
+            output_format='png',
+        )
         if not done:
             done = st.checkbox(f'Done on step {step}', value=True)
         else:
@@ -161,19 +172,35 @@ def main():
     pl.seed_everything(0)
 
     env = make_env()
+    dataset = env.dataset
 
     st.write('# Env test app')
 
-    data_index = st.sidebar.number_input(
-        f'Data index (0~{len(env.dataset)})', 0, len(env.dataset), value=0, step=1
-    )
+    if st.sidebar.radio('Mode to select', ['index', 'font & alphabet']) == 'index':
+        data_index = st.sidebar.number_input(
+            f'Data index (0~{len(dataset)})', 0, len(dataset), value=0, step=1
+        )
+        st.sidebar.write(
+            f'Font: `{dataset.unique_font[dataset.index_to_font(data_index)]}`',
+            '\n',
+            f'Alphabet: `{dataset.unique_alphabet[dataset.index_to_alphabet(data_index)]}`',
+        )
+    else:
+        font = st.sidebar.selectbox('Font', dataset.unique_font)
+        alphabet = st.sidebar.selectbox('Alphabet', dataset.unique_alphabet)
+        font_index = dataset.unique_font.index(font)
+        alphabet_index = dataset.unique_alphabet.index(alphabet)
+        data_index = dataset.font_alphabet_to_index(font_index, alphabet_index)
+        st.sidebar.write('Data index:', data_index)
 
     _ = env.reset(data_index=data_index)
     image = env.data[0]
     target = env.data[1]
 
     st.sidebar.write('# Original data')
-    st.sidebar.image(to_pil_image(image.cpu()), use_column_width=True)
+    st.sidebar.image(
+        to_pil_image(image.cpu()), use_column_width=True, output_format='png'
+    )
 
     step = 0
     done = False
@@ -191,6 +218,16 @@ def main():
             y=[i // image.shape[2] for i in env.trajectory['action']],
             loss=env.trajectory['loss'],
             reward=env.trajectory['reward'],
+            **{
+                alphabet: data
+                for alphabet, data in zip(
+                    env.dataset.unique_alphabet,
+                    torch.cat(env.trajectory['likelihood'], 0)
+                    .softmax(1)
+                    .T.detach()
+                    .cpu(),
+                )
+            },
         ),
     )
     st.sidebar.dataframe(df)
@@ -198,16 +235,35 @@ def main():
     st.sidebar.write('loss')
     fig = plt.figure()
     plt.plot(env.trajectory['loss'], marker='o', label='loss')
+    plt.hlines(
+        [
+            F.cross_entropy(
+                torch.zeros([1, 26]),
+                torch.tensor([target], dtype=torch.long),
+            ).item()
+        ],
+        *plt.xlim(),
+        color='gray',
+        linestyles='--',
+    )
+    plt.ylim([0, max(plt.ylim())])
     st.sidebar.pyplot(fig, True)
 
     st.sidebar.write('reward')
     fig = plt.figure()
     plt.plot(env.trajectory['reward'], marker='o', label='reward')
+    plt.hlines(
+        [0],
+        0,
+        step,
+        color='gray',
+        linestyles='--',
+    )
     st.sidebar.pyplot(fig, True)
 
     st.sidebar.write('patch')
     for image in env.trajectory['patch']:
-        st.sidebar.image(to_pil_image(image.cpu()), use_column_width=True)
+        st.sidebar.image(to_pil_image(image.cpu()), output_format='png')
 
     return
 

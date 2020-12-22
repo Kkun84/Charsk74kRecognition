@@ -44,8 +44,9 @@ def main(config) -> None:
         image_size = 100
         patch_size = hparams.patch_size
         feature_n = hparams.feature_n
+        output_n = 26
 
-        obs_size = feature_n + 1
+        obs_size = output_n + 1
         n_actions = (image_size - patch_size) ** 2
         done_loss = 0.1
 
