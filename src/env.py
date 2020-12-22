@@ -10,7 +10,7 @@ from typing import Iterable
 import pytorch_lightning as pl
 
 
-class PatchSetsClassification(gym.Env):
+class PatchSetsClassificationEnv(gym.Env):
     def __init__(
         self,
         dataset: Dataset,
@@ -34,11 +34,16 @@ class PatchSetsClassification(gym.Env):
     @staticmethod
     def crop(image: Tensor, x: int, y: int, patch_size: int) -> Tensor:
         assert image.dim() == 3
-        image = nn.ConstantPad2d(patch_size // 2, 0)(image)
-        patch = image[:, x : x + patch_size, y : y + patch_size]
+        patch = image[:, y : y + patch_size, x : x + patch_size]
         assert patch.shape == torch.Size(
             [1, *[patch_size] * 2]
         ), f"{patch.shape} == {torch.Size([1, *[patch_size] * 2])}"
+        # assert image.dim() == 3
+        # image = nn.ConstantPad2d(patch_size // 2, 0)(image)
+        # patch = image[:, y : y + patch_size, x : x + patch_size]
+        # assert patch.shape == torch.Size(
+        #     [1, *[patch_size] * 2]
+        # ), f"{patch.shape} == {torch.Size([1, *[patch_size] * 2])}"
         return patch
 
     @staticmethod
@@ -57,58 +62,87 @@ class PatchSetsClassification(gym.Env):
 
     def reset(self, data_index: int = None) -> Tensor:
         with torch.no_grad():
-            self.trajectory = {i: [] for i in ['action', 'patch', 'feature']}
+            self.trajectory = {
+                i: []
+                for i in [
+                    'observation',
+                    'action',
+                    'patch',
+                    'feature_set',
+                    'loss',
+                    'reward',
+                ]
+            }
 
             if data_index is None:
-                self.data = random.choice(self.dataset)
+                data = random.choice(self.dataset)
             else:
-                self.data = self.dataset[data_index]
+                data = self.dataset[data_index]
+            self.data = (data[0].to(self.model.device), data[1])
             observation = self.make_observation(
-                self.data[0], torch.zeros([self.feature_n])
+                self.data[0].to(self.model.device),
+                torch.zeros([self.feature_n], device=self.model.device),
             )
-            self.last_loss = F.binary_cross_entropy_with_logits(
-                torch.zeros_like(self.data[1])[None], self.data[1][None]
-            ).item()
-        self.step_count = 0
-        return observation
+            self.last_loss = None
+            self.step_count = 0
+            # observation = torch.rand([65, 100, 100]).numpy()
+            self.trajectory['observation'].append(observation)
+            return observation
 
-    def step(self, action: Iterable) -> tuple:
+    def step(self, action: int) -> tuple:
         with torch.no_grad():
-            image = self.data[0]
+            image, target = self.data
 
             self.trajectory['action'].append(action)
-            action_x = action // image.shape[1]
-            action_y = action % image.shape[2]
+            action_x = action % (image.shape[2] - self.patch_size + 1)
+            action_y = action // (image.shape[2] - self.patch_size + 1)
 
             patch = self.crop(image, action_x, action_y, self.patch_size)
-            self.trajectory['patch'].append(patch)
+            self.trajectory['patch'].append(patch.detach().clone())
 
             feature_set = self.model.encode(patch[None, None])
             if self.step_count > 0:
                 feature_set = torch.cat(
-                    [feature_set, self.trajectory['feature'][-1].unsqueeze(1)], 1
+                    [
+                        feature_set,
+                        self.trajectory['feature_set'][-1],
+                    ],
+                    1,
                 )
 
+            self.trajectory['feature_set'].append(feature_set.detach().clone())
+
             feature = self.model.pool(feature_set)
-            self.trajectory['feature'].append(feature)
 
             y_hat = self.model.decode(feature)
 
-            observation = self.make_observation(self.data[0], feature[0])
+            observation = self.make_observation(image, feature[0])
+            self.trajectory['observation'].append(observation)
 
-            loss = F.binary_cross_entropy_with_logits(y_hat, self.data[1][None]).item()
+            loss = F.cross_entropy(
+                y_hat,
+                torch.tensor([target], dtype=torch.long, device=self.model.device),
+            ).item()
+            self.trajectory['loss'].append(loss)
 
             done = loss < self.done_loss
 
+            if self.last_loss is None:
+                self.last_loss = F.cross_entropy(
+                    torch.zeros_like(y_hat),
+                    torch.tensor([target], dtype=torch.long, device=self.model.device),
+                ).item()
             if not done:
                 reward = self.last_loss - loss
             else:
                 reward = self.last_loss
+            self.trajectory['reward'].append(reward)
             self.last_loss = loss
-            if done:
-                reward = reward
-        self.step_count += 1
-        return observation, reward, done, {}
+            self.step_count += 1
+            # observation = torch.rand([65, 100, 100]).numpy()
+            # reward = torch.randn([1]).item()
+            # done = torch.randint(0, 2, [1]).item()
+            return observation, reward, done, {}
 
     # def render(self, mode="human", close=False):
     #     pass
@@ -121,72 +155,48 @@ class PatchSetsClassification(gym.Env):
 
 
 if __name__ == "__main__":
-    import src.model
+    import src.env_model
+    import src.agent_model
+    from dataset import AdobeFontDataset
+    from torchvision import transforms
+    from torchsummary import summary
+    import pfrl
+
+    # pl.seed_everything(0)
+
+    model = src.env_model.Model.load_from_checkpoint(
+        checkpoint_path='/workspace/epoch=1455.ckpt'
+    )
+    hparams = model.hparams
+    summary(model)
+    model.eval()
 
     image_size = 100
-    patch_size = 3
-    input_n, hidden_n, feature_n, output_n = patch_size ** 2, 4, 4, 4
-    obs_size, n_actions = feature_n + 1, image_size ** 2
-    done_loss = 0.14
-
-    pl.seed_everything(0)
-
-    model = src.model.Model(input_n, hidden_n, feature_n, output_n)
+    patch_size = hparams.patch_size
+    feature_n = hparams.feature_n
+    obs_size = feature_n + 1
+    n_actions = (image_size - patch_size) ** 2
+    done_loss = 0.3
 
     dataset = [
         (
             torch.rand(1, image_size, image_size) * 100,
-            torch.eye(output_n)[torch.randint(output_n, [1]) * 0][0],
+            torch.randint(26, [1]),
         )
-        for i in range(1000)
+        for i in range(100)
     ]
 
-    env = PatchSetsClassification(dataset, model, patch_size, feature_n, done_loss)
+    env = PatchSetsClassificationEnv(dataset, model, patch_size, feature_n, done_loss)
 
     state = env.reset()
-
     print(state.shape)
-
     action = 0
-
     state, reward, done, _ = env.step(action)
-
     print(state.shape)
     print(reward)
     print(done)
-
-    print("@" * 80)
-
-    import pfrl
-
-    ppo = src.model.PPO(obs_size, n_actions, hidden_n)
-
-    optimizer = torch.optim.Adam(model.parameters(), eps=1e-4)
-
-    agent = pfrl.agents.PPO(
-        ppo,
-        optimizer,
-        gpu=-1,
-        gamma=0.95,
-        # phi=lambda x: x.astype(numpy.float32, copy=False),
-        update_interval=2 ** 8,
-        minibatch_size=2 ** 6,
-        epochs=10,
-    )
-
-    import logging
-    import sys
-
-    logging.basicConfig(level=logging.INFO, stream=sys.stdout, format="")
-
-    pfrl.experiments.train_agent_with_evaluation(
-        agent,
-        env,
-        steps=1000000,  # Train the agent for 2000 steps
-        eval_n_steps=None,  # We evaluate for episodes, not time
-        eval_n_episodes=10,  # 10 episodes are sampled for each evaluation
-        eval_interval=1000,  # Evaluate the agent after every 1000 steps
-        train_max_episode_len=100,
-        # eval_max_episode_len=10,
-        outdir='2020年12月16日',  # Save everything to 'result' directory
-    )
+    action = 1
+    state, reward, done, _ = env.step(action)
+    print(state.shape)
+    print(reward)
+    print(done)

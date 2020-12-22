@@ -17,7 +17,9 @@ docker run \
     -d \
     --init \
     --rm \
+    -p 8501:8501 \
     -it \
+    --gpus=all \
     --ipc=host \
     --name=PatchEnv \
     --env-file=.env \

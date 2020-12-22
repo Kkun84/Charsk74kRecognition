@@ -1,0 +1,34 @@
+project_name: PatchSetsRL
+experiment_name: Default
+
+debug: False
+
+hparams:
+  done_loss: 0
+
+env:
+  checkpoint_path: /workspace/src/env_model/epoch=711.ckpt
+
+agent:
+  gpu: 0
+  gamma: 0.95
+  update_interval: 512
+  minibatch_size: 32
+  entropy_coef: 1e-3
+
+experiment:
+  steps: 1_000_000
+  eval_interval: 1024
+  eval_n_episodes: 16
+  eval_n_steps: ~
+  train_max_episode_len: 8
+  eval_max_episode_len: 8
+  use_tensorboard: True
+
+optim:
+  lr: 1e-3
+  eps: 1e-8
+
+hydra:
+  run:
+    dir: ./outputs/${experiment_name}/${now:%Y-%m-%d}/${now:%H-%M-%S}
