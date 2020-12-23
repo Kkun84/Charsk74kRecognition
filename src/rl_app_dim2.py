@@ -23,7 +23,7 @@ device = 'cuda'
 @st.cache(allow_output_mutation=True)
 def make_env():
     model = src.env_model.Model.load_from_checkpoint(
-        checkpoint_path='/workspace/outputs/Default/2020-12-22/18-55-40/copied/src/env_model/epoch=1039.ckpt'
+        checkpoint_path='/workspace/outputs/Default/2020-12-22/12-41-54__interrupted__/copied/src/env_model/epoch=711.ckpt'
     ).to(device)
     hparams = model.hparams
     model.eval()
@@ -33,7 +33,7 @@ def make_env():
     patch_size = hparams.patch_size
     feature_n = hparams.feature_n
     output_n = 26
-    obs_size = output_n + 1
+    obs_size = feature_n + 1
     n_actions = (image_size - patch_size) ** 2
     done_loss = 0
 
@@ -60,7 +60,9 @@ def make_env():
 def make_agent(obs_size, n_actions, hidden_n, patch_size):
     model = src.agent_model.Model(obs_size, n_actions, hidden_n, patch_size).to(device)
     model.load_state_dict(
-        torch.load('/workspace/outputs/Default/2020-12-22/18-55-40/best/model.pt')
+        torch.load(
+            '/workspace/outputs/Default/2020-12-22/12-41-54__interrupted__/best/model.pt'
+        )
     )
     model.eval()
     summary(model)
@@ -224,7 +226,7 @@ def main():
     feature_n = env.model.hparams.feature_n
     output_n = 26
 
-    obs_size = output_n + 1
+    obs_size = feature_n + 1
     n_actions = (image_size - patch_size) ** 2
 
     agent_model = make_agent(obs_size, n_actions, 64, patch_size)

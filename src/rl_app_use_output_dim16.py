@@ -12,7 +12,7 @@ from torchvision.transforms.functional import to_pil_image
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from src.env import PatchSetsClassificationEnv
+from src.env_output import PatchSetsClassificationEnv
 import src.env_model
 import src.agent_model
 
