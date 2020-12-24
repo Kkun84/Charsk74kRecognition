@@ -38,23 +38,17 @@ class PatchSetsClassificationEnv(gym.Env):
         assert patch.shape == torch.Size(
             [1, *[patch_size] * 2]
         ), f"{patch.shape} == {torch.Size([1, *[patch_size] * 2])}"
-        # assert image.dim() == 3
-        # image = nn.ConstantPad2d(patch_size // 2, 0)(image)
-        # patch = image[:, y : y + patch_size, x : x + patch_size]
-        # assert patch.shape == torch.Size(
-        #     [1, *[patch_size] * 2]
-        # ), f"{patch.shape} == {torch.Size([1, *[patch_size] * 2])}"
         return patch
 
     @staticmethod
-    def make_observation(image: Tensor, feature: Tensor) -> Tensor:
+    def make_observation(image: Tensor, output: Tensor) -> Tensor:
         assert image.dim() == 3
-        assert feature.dim() == 1
+        assert output.dim() == 1
         observation = torch.cat(
             [
                 image,
-                *feature.squeeze(0)[:, None, None, None].expand(
-                    len(feature), *image.shape
+                *output.softmax(0)[:, None, None, None].expand(
+                    len(output), *image.shape
                 ),
             ]
         )
@@ -80,9 +74,9 @@ class PatchSetsClassificationEnv(gym.Env):
             else:
                 data = self.dataset[data_index]
             self.data = (data[0].to(self.model.device), data[1])
+            output = torch.zeros(26, device=self.model.device)
             observation = self.make_observation(
-                self.data[0].to(self.model.device),
-                torch.zeros([self.feature_n], device=self.model.device),
+                self.data[0].to(self.model.device), output
             )
             self.last_loss = None
             self.step_count = 0
@@ -118,7 +112,7 @@ class PatchSetsClassificationEnv(gym.Env):
             y_hat = self.model.decode(feature)
             self.trajectory['likelihood'].append(y_hat.detach().clone())
 
-            observation = self.make_observation(image, feature[0])
+            observation = self.make_observation(image, y_hat[0])
             self.trajectory['observation'].append(observation)
 
             loss = F.cross_entropy(
@@ -167,7 +161,7 @@ if __name__ == "__main__":
     # pl.seed_everything(0)
 
     model = src.env_model.Model.load_from_checkpoint(
-        checkpoint_path='/workspace/epoch=1455.ckpt'
+        checkpoint_path='/workspace/src/env_model/epoch=1039.ckpt'
     )
     hparams = model.hparams
     summary(model)
