@@ -5,16 +5,17 @@ debug: False
 
 hparams:
   done_loss: 0
+  start_entropy_coef: 1e-1
+  end_entropy_coef: 0
 
 env:
-  checkpoint_path: /workspace/src/env_model/epoch=1039.ckpt
+  checkpoint_path: /workspace/src/env_model/epoch=1062.ckpt
 
 agent:
   gpu: 0
   gamma: 0.95
   update_interval: 512
   minibatch_size: 32
-  entropy_coef: 1e-3
 
 experiment:
   steps: 1_000_000

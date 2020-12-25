@@ -3,6 +3,7 @@ import gym
 import random
 import torch
 from torch import Tensor
+from torch._C import device
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset
@@ -16,19 +17,14 @@ class PatchSetsClassificationEnv(gym.Env):
         dataset: Dataset,
         model: nn.Module,
         patch_size: int,
-        feature_n: int,
-        done_loss: float,
+        done_loss: float = 0,
     ):
-        self.action_space = None
-        self.observation_space = None
-
-        for attr in ['encode', 'pool', 'decode']:
-            assert hasattr(model, attr), attr
+        self.action_space = gym.spaces.Discrete((100 - patch_size + 1) ** 2)
+        self.observation_space = gym.spaces.Box(low=0, high=1, shape=[2, 100, 100])
 
         self.dataset = dataset
         self.model = model
         self.patch_size = patch_size
-        self.feature_n = feature_n
         self.done_loss = done_loss
 
     @staticmethod
@@ -41,17 +37,35 @@ class PatchSetsClassificationEnv(gym.Env):
         return patch
 
     @staticmethod
-    def make_observation(image: Tensor, output: Tensor) -> Tensor:
+    def make_mask(
+        image: Tensor,
+        x: int = None,
+        y: int = None,
+        patch_size: int = None,
+        mask: Tensor = None,
+    ) -> Tensor:
         assert image.dim() == 3
-        assert output.dim() == 1
-        observation = torch.cat(
-            [
-                image,
-                *output.softmax(0)[:, None, None, None].expand(
-                    len(output), *image.shape
-                ),
-            ]
-        )
+        if mask is None:
+            mask = torch.zeros([1, *image.shape[1:]], device=image.device)
+        else:
+            mask = mask.clone()
+        if None not in (x, y, patch_size):
+            assert mask.dim() == 3
+            assert image.shape[1:] == mask.shape[1:]
+            assert 0 <= y <= image.shape[1] - patch_size
+            assert 0 <= x <= image.shape[2] - patch_size
+            # mask[:, y : y + patch_size, x : x + patch_size] = 1
+            mask[:, y : y + patch_size, x : x + patch_size] += 1
+        elif not (None in (x, y, patch_size)):
+            assert False
+        return mask
+
+    @staticmethod
+    def make_observation(image: Tensor, mask: Tensor) -> Tensor:
+        assert image.dim() == 3
+        assert mask.dim() == 3
+        assert image.shape[1:] == mask.shape[1:]
+        observation = torch.cat([image, mask])
         return observation
 
     def reset(self, data_index: int = None) -> Tensor:
@@ -73,14 +87,15 @@ class PatchSetsClassificationEnv(gym.Env):
                 data = random.choice(self.dataset)
             else:
                 data = self.dataset[data_index]
+
             self.data = (data[0].to(self.model.device), data[1])
-            output = torch.zeros(26, device=self.model.device)
-            observation = self.make_observation(
-                self.data[0].to(self.model.device), output
-            )
+
+            image = self.data[0]
+            self.mask = self.make_mask(image)
+            observation = self.make_observation(image, self.mask)
+
             self.last_loss = None
             self.step_count = 0
-            # observation = torch.rand([65, 100, 100]).numpy()
             self.trajectory['observation'].append(observation)
             return observation
 
@@ -112,7 +127,11 @@ class PatchSetsClassificationEnv(gym.Env):
             y_hat = self.model.decode(feature)
             self.trajectory['likelihood'].append(y_hat.detach().clone())
 
-            observation = self.make_observation(image, y_hat[0])
+            image = self.data[0]
+            self.mask = self.make_mask(
+                image, action_x, action_y, self.patch_size, self.mask
+            )
+            observation = self.make_observation(image, self.mask)
             self.trajectory['observation'].append(observation)
 
             loss = F.cross_entropy(
@@ -135,9 +154,6 @@ class PatchSetsClassificationEnv(gym.Env):
             self.trajectory['reward'].append(reward)
             self.last_loss = loss
             self.step_count += 1
-            # observation = torch.rand([65, 100, 100]).numpy()
-            # reward = torch.randn([1]).item()
-            # done = torch.randint(0, 2, [1]).item()
             return observation, reward, done, {}
 
     # def render(self, mode="human", close=False):
@@ -169,8 +185,7 @@ if __name__ == "__main__":
 
     image_size = 100
     patch_size = hparams.patch_size
-    feature_n = hparams.feature_n
-    obs_size = feature_n + 1
+    obs_size = 2
     n_actions = (image_size - patch_size) ** 2
     done_loss = 0.3
 
@@ -182,7 +197,7 @@ if __name__ == "__main__":
         for i in range(100)
     ]
 
-    env = PatchSetsClassificationEnv(dataset, model, patch_size, feature_n, done_loss)
+    env = PatchSetsClassificationEnv(dataset, model, patch_size)
 
     state = env.reset()
     print(state.shape)
