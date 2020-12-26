@@ -68,7 +68,8 @@ def main(config) -> None:
 
         env = PatchSetsClassificationEnv(dataset, model, patch_size, done_loss)
 
-        agent_model = src.agent_model.Model(obs_size, n_actions, 64, patch_size)
+        # agent_model = src.agent_model.Model(obs_size, n_actions, patch_size)
+        agent_model = src.agent_model.Model(obs_size, patch_size)
         summary(agent_model)
 
         optimizer = torch.optim.Adam(agent_model.parameters(), **config.optim)
@@ -80,14 +81,17 @@ def main(config) -> None:
             config.hparams.start_entropy_coef,
             config.hparams.end_entropy_coef,
         ]:
-            step_hooks.append(
-                LinearInterpolationHook(
-                    config.experiment.steps,
-                    config.hparams.start_entropy_coef,
-                    config.hparams.end_entropy_coef,
-                    entropy_coef_setter,
-                )
+            kwargs = dict(
+                total_steps=config.experiment.steps
+                * config.hparams.total_steps_entropy_coef,
+                start_value=config.hparams.start_entropy_coef,
+                stop_value=config.hparams.end_entropy_coef,
+                setter=entropy_coef_setter,
             )
+            logger.info(
+                f'LinearInterpolationHook({", ".join([f"{k}={v}" for k, v in kwargs.items()])})'
+            )
+            step_hooks.append(LinearInterpolationHook(**kwargs))
 
         pfrl.experiments.train_agent_with_evaluation(
             agent=agent,

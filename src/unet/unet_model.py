@@ -1,13 +1,14 @@
 """ Full assembly of the parts to form the complete network """
 
-from torch import nn
+from torch import nn, Tensor
 import torch.nn.functional as F
+from typing import Union
 
 from .unet_parts import DoubleConv, Down, Up, OutConv
 
 
 class UNet(nn.Module):
-    def __init__(self, n_channels, n_classes, bilinear=True):
+    def __init__(self, n_channels: int, n_classes: Union[int, None], bilinear: bool = True):
         super(UNet, self).__init__()
         self.n_channels = n_channels
         self.n_classes = n_classes
@@ -23,9 +24,12 @@ class UNet(nn.Module):
         self.up2 = Up(512, 256 // factor, bilinear)
         self.up3 = Up(256, 128 // factor, bilinear)
         self.up4 = Up(128, 64, bilinear)
-        # self.outc = OutConv(64, n_classes)
+        if n_classes is None:
+            self.outc = None
+        else:
+            self.outc = OutConv(64, n_classes)
 
-    def forward(self, x):
+    def forward(self, x: Tensor, return_feature: bool = False):
         x1 = self.inc(x)
         x2 = self.down1(x1)
         x3 = self.down2(x2)
@@ -35,5 +39,8 @@ class UNet(nn.Module):
         x = self.up2(x, x3)
         x = self.up3(x, x2)
         x = self.up4(x, x1)
-        # x = self.outc(x)
+        if self.outc is not None:
+            x = self.outc(x)
+        if return_feature:
+            return x, x5
         return x

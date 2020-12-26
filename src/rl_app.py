@@ -1,10 +1,9 @@
-from matplotlib import figure
 import streamlit as st
 import torch
+import more_itertools
 from torch import Tensor, nn
 import torch.nn.functional as F
 import pytorch_lightning as pl
-from datetime import datetime
 from dataset import AdobeFontDataset
 from torchvision import transforms
 from torchsummary import summary
@@ -23,7 +22,7 @@ device = 'cuda'
 @st.cache(allow_output_mutation=True)
 def make_env():
     model = src.env_model.Model.load_from_checkpoint(
-        checkpoint_path='/workspace/outputs/Default/2020-12-25/16-33-19__interrupted__/copied/src/env_model/epoch=1062.ckpt'
+        checkpoint_path='/workspace/outputs/Default/2020-12-25/18-21-35/copied/src/env_model/epoch=1062.ckpt'
     ).to(device)
     hparams = model.hparams
     model.eval()
@@ -55,12 +54,10 @@ def make_env():
 
 
 @st.cache(allow_output_mutation=True)
-def make_agent(obs_size, n_actions, hidden_n, patch_size):
-    model = src.agent_model.Model(obs_size, n_actions, hidden_n, patch_size).to(device)
+def make_agent(obs_size, n_actions, patch_size):
+    model = src.agent_model.Model(obs_size, patch_size).to(device)
     model.load_state_dict(
-        torch.load(
-            '/workspace/outputs/Default/2020-12-25/16-33-19__interrupted__/best/model.pt'
-        )
+        torch.load('/workspace/outputs/Default/2020-12-26/17-01-17/best/model.pt')
     )
     model.eval()
     summary(model)
@@ -136,6 +133,7 @@ def one_step(
         plt.imshow(loss_map.detach().cpu().numpy()[0])
         plt.colorbar()
         st.pyplot(fig, True)
+        plt.close()
 
     with col_state:
         obs = env.trajectory['observation'][-1]
@@ -145,11 +143,13 @@ def one_step(
         plt.imshow(obs[0].detach().cpu().numpy())
         plt.colorbar()
         st.pyplot(fig, True)
+        plt.close()
 
         fig = plt.figure()
-        plt.imshow(obs[1].detach().cpu().numpy(), vmin=0, vmax=1)
+        plt.imshow(obs[1].detach().cpu().numpy())
         plt.colorbar()
         st.pyplot(fig, True)
+        plt.close()
 
     with col_rl_map:
         obs = env.trajectory['observation'][-1]
@@ -164,6 +164,7 @@ def one_step(
         plt.imshow(select_probs_map.detach().cpu().numpy())
         plt.colorbar()
         st.pyplot(fig, True)
+        plt.close()
 
     with col_loss_dataflame:
         st.write('Low loss actions')
@@ -243,7 +244,7 @@ def main():
     obs_size = 1 + 1
     n_actions = (image_size - patch_size) ** 2
 
-    agent_model = make_agent(obs_size, n_actions, 64, patch_size)
+    agent_model = make_agent(obs_size, n_actions, patch_size)
 
     st.write('# RL test app')
 
@@ -254,18 +255,22 @@ def main():
     )
     if mode_to_select == 'index':
         data_index = st.sidebar.number_input(
-            f'Data index (0~{len(dataset)})', 0, len(dataset) - 1, value=0, step=1
+            f'Data index (0~{len(dataset) - 1})',
+            0,
+            len(dataset) - 1,
+            value=1300,
+            step=1,
         )
     elif mode_to_select == 'font index & alphabet index':
         font_index = st.sidebar.number_input(
-            f'Font index (0~{len(dataset.unique_font)})',
+            f'Font index (0~{len(dataset.unique_font) - 1})',
             0,
             len(dataset.unique_font) - 1,
-            value=3,
+            value=50,
             step=1,
         )
         alphabet_index = st.sidebar.number_input(
-            f'Alphabet index (0~{len(dataset.unique_alphabet)})',
+            f'Alphabet index (0~{len(dataset.unique_alphabet) - 1})',
             0,
             len(dataset.unique_alphabet) - 1,
             value=0,
@@ -273,7 +278,7 @@ def main():
         )
         data_index = dataset.font_alphabet_to_index(font_index, alphabet_index)
     elif mode_to_select == 'font & alphabet':
-        font = st.sidebar.selectbox('Font', dataset.unique_font)
+        font = st.sidebar.selectbox('Font', dataset.unique_font, index=50)
         alphabet = st.sidebar.selectbox('Alphabet', dataset.unique_alphabet)
         font_index = dataset.unique_font.index(font)
         alphabet_index = dataset.unique_alphabet.index(alphabet)
@@ -327,23 +332,32 @@ def main():
             },
         ),
     )
-    st.sidebar.dataframe(df)
 
-    st.sidebar.write('accuracy')
-    accuracy_df = df[dataset.unique_alphabet]
+    st.sidebar.write('patch')
+    for i in more_itertools.chunked(env.trajectory['patch'], 4):
+        for col, image in zip(st.sidebar.beta_columns(4), list(i) + [None] * 3):
+            if image is not None:
+                col.image(
+                    to_pil_image(image.cpu()),
+                    use_column_width=True,
+                    output_format='png',
+                )
+
+    st.sidebar.write('likelihood')
+    likelihood_df = df[dataset.unique_alphabet]
     fig = plt.figure()
     plt.plot(
-        accuracy_df[dataset.unique_alphabet[target]],
+        likelihood_df[dataset.unique_alphabet[target]],
         color='black',
         marker='o',
         label=dataset.unique_alphabet[target],
     )
     top_acc_label = []
-    for _, row in accuracy_df.iterrows():
+    for _, row in likelihood_df.iterrows():
         top_acc_label.extend(row.sort_values(ascending=False)[:2].index)
     display_label = sorted(set(top_acc_label) - {dataset.unique_alphabet[target]})
     for label in display_label:
-        plt.plot(accuracy_df[label], marker='.', label=label)
+        plt.plot(likelihood_df[label], marker='.', label=label)
     plt.ylim([0, 1])
     plt.legend()
     st.sidebar.pyplot(fig, True)
@@ -377,10 +391,8 @@ def main():
     )
     st.sidebar.pyplot(fig, True)
 
-    st.sidebar.write('patch')
-    for image in env.trajectory['patch']:
-        st.sidebar.image(to_pil_image(image.cpu()), output_format='png')
-
+    st.sidebar.write('data')
+    st.sidebar.dataframe(df)
     return
 
 
