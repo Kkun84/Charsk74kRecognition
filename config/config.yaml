@@ -5,6 +5,7 @@ debug: False
 
 hparams:
   done_loss: 0
+  total_steps_entropy_coef: 0.75
   start_entropy_coef: 1e-1
   end_entropy_coef: 0
 
@@ -14,11 +15,11 @@ env:
 agent:
   gpu: 0
   gamma: 0.95
-  update_interval: 512
-  minibatch_size: 32
+  update_interval: 256
+  minibatch_size: 64
 
 experiment:
-  steps: 1_000_000
+  steps: 100_000
   eval_interval: 1024
   eval_n_episodes: 16
   eval_n_steps: ~
