@@ -17,7 +17,7 @@ class PatchSetsClassificationEnv(gym.Env):
         dataset: Dataset,
         model: nn.Module,
         patch_size: int,
-        done_loss: float = 0,
+        done_prob: float = 1,
     ):
         self.action_space = gym.spaces.Discrete((100 - patch_size + 1) ** 2)
         self.observation_space = gym.spaces.Box(low=0, high=1, shape=[2, 100, 100])
@@ -25,7 +25,7 @@ class PatchSetsClassificationEnv(gym.Env):
         self.dataset = dataset
         self.model = model
         self.patch_size = patch_size
-        self.done_loss = done_loss
+        self.done_prob = done_prob
 
     @staticmethod
     def crop(image: Tensor, x: int, y: int, patch_size: int) -> Tensor:
@@ -54,7 +54,6 @@ class PatchSetsClassificationEnv(gym.Env):
             assert image.shape[1:] == mask.shape[1:]
             assert 0 <= y <= image.shape[1] - patch_size
             assert 0 <= x <= image.shape[2] - patch_size
-            # mask[:, y : y + patch_size, x : x + patch_size] = 1
             mask[:, y : y + patch_size, x : x + patch_size] += 1
         elif not (None in (x, y, patch_size)):
             assert False
@@ -94,7 +93,7 @@ class PatchSetsClassificationEnv(gym.Env):
             self.mask = self.make_mask(image)
             observation = self.make_observation(image, self.mask)
 
-            self.last_loss = None
+            self.last_likelihood_advantage = 0
             self.step_count = 0
             self.trajectory['observation'].append(observation)
             return observation
@@ -124,8 +123,8 @@ class PatchSetsClassificationEnv(gym.Env):
 
             feature = self.model.pool(feature_set)
 
-            y_hat = self.model.decode(feature)
-            self.trajectory['likelihood'].append(y_hat.detach().clone())
+            likelihood = self.model.decode(feature)
+            self.trajectory['likelihood'].append(likelihood.detach().clone())
 
             image = self.data[0]
             self.mask = self.make_mask(
@@ -135,24 +134,25 @@ class PatchSetsClassificationEnv(gym.Env):
             self.trajectory['observation'].append(observation)
 
             loss = F.cross_entropy(
-                y_hat,
+                likelihood,
                 torch.tensor([target], dtype=torch.long, device=self.model.device),
             ).item()
             self.trajectory['loss'].append(loss)
 
-            done = loss < self.done_loss
+            prob = likelihood.softmax(1)[0]
+            done = prob[target] > self.done_prob
 
-            if self.last_loss is None:
-                self.last_loss = F.cross_entropy(
-                    torch.zeros_like(y_hat),
-                    torch.tensor([target], dtype=torch.long, device=self.model.device),
-                ).item()
             if not done:
-                reward = self.last_loss - loss
+                likelihood_advantage = (
+                    prob[target]
+                    - torch.cat([prob[:target], prob[target + 1 :]], 0).max()
+                ).item()
+                reward = likelihood_advantage - self.last_likelihood_advantage
             else:
-                reward = self.last_loss
+                likelihood_advantage = 1
+                reward = likelihood_advantage - self.last_likelihood_advantage
+            self.last_likelihood_advantage = likelihood_advantage
             self.trajectory['reward'].append(reward)
-            self.last_loss = loss
             self.step_count += 1
             return observation, reward, done, {}
 
@@ -177,7 +177,7 @@ if __name__ == "__main__":
     # pl.seed_everything(0)
 
     model = src.env_model.Model.load_from_checkpoint(
-        checkpoint_path='/workspace/src/env_model/epoch=1039.ckpt'
+        checkpoint_path='/workspace/src/env_model/epoch=1062.ckpt'
     )
     hparams = model.hparams
     summary(model)
@@ -187,7 +187,7 @@ if __name__ == "__main__":
     patch_size = hparams.patch_size
     obs_size = 2
     n_actions = (image_size - patch_size) ** 2
-    done_loss = 0.3
+    done_prob = 0.3
 
     dataset = [
         (
