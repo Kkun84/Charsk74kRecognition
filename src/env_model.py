@@ -16,8 +16,8 @@ class Model(pl.LightningModule):
         feature_n: int,
         output_n: int,
         pool_mode: str,
-        patch_num_min: int,
-        patch_num_max: int,
+        # patch_num_min: int,
+        # patch_num_max: int,
         seed: int = None,
         batch_size: int = None,
         num_workers: int = None,
@@ -26,15 +26,15 @@ class Model(pl.LightningModule):
         patience: int = None,
         optimizer: str = None,
         lr: float = None,
-        data_split_num: int = None,
-        data_use_num: int = None,
+        # data_split_num: int = None,
+        # data_use_num: int = None,
     ):
         super().__init__()
         self.save_hyperparameters()
 
-        assert (
-            patch_num_min <= patch_num_max
-        ), f'patch_num_min={patch_num_min}, patch_num_max={patch_num_max}'
+        # assert (
+        #     patch_num_min <= patch_num_max
+        # ), f'patch_num_min={patch_num_min}, patch_num_max={patch_num_max}'
 
         self.pool_mode = pool_mode
 
@@ -115,21 +115,21 @@ class Model(pl.LightningModule):
     def _step(self, batch: List[Tensor]) -> Dict[str, Any]:
         x, y = batch
         batch_size = len(y)
-        patch_sets = sm.cutout_patch2d(
-            x,
-            torch.randint(
-                self.hparams.patch_num_min,
-                self.hparams.patch_num_max + 1,
-                [batch_size],
-            ),
-            # [
-            #     torch.randint(
-            #         self.hparams.patch_num_min, self.hparams.patch_num_max + 1, [1]
-            #     )
-            # ]
-            # * batch_size,
-            self.hparams.patch_size,
-        )
+        # patch_sets = sm.cutout_patch2d(
+        #     x,
+        #     torch.randint(
+        #         self.hparams.patch_num_min,
+        #         self.hparams.patch_num_max + 1,
+        #         [batch_size],
+        #     ),
+        #     # [
+        #     #     torch.randint(
+        #     #         self.hparams.patch_num_min, self.hparams.patch_num_max + 1, [1]
+        #     #     )
+        #     # ]
+        #     # * batch_size,
+        #     self.hparams.patch_size,
+        # )
         y_hat = self.forward(patch_sets)
         loss = F.cross_entropy(y_hat, y)
         accuracy = self.accuracy(y_hat, y)
