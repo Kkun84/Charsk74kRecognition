@@ -49,13 +49,13 @@ class PatchSetsClassificationEnv(gym.Env):
             mask = torch.zeros([1, *image.shape[1:]], device=image.device)
         else:
             mask = mask.clone()
-        if None not in (x, y, patch_size):
+        if x is not None and y is not None and patch_size is not None:
             assert mask.dim() == 3
             assert image.shape[1:] == mask.shape[1:]
             assert 0 <= y <= image.shape[1] - patch_size
             assert 0 <= x <= image.shape[2] - patch_size
             mask[:, y : y + patch_size, x : x + patch_size] += 1
-        elif not (None in (x, y, patch_size)):
+        elif not (x is None and y is None and patch_size is None):
             assert False
         return mask
 
