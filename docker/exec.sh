@@ -1,2 +1,2 @@
 #!/bin/bash
-docker exec -it PatchEnv ${@-fish}
+docker exec -it PatchSetsRL ${@-fish}

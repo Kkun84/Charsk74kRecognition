@@ -13,9 +13,9 @@ docker run \
     -it \
     --gpus=all \
     --ipc=host \
-    --name=PatchEnv \
+    --name=PatchSetsRL \
     --env-file=.env \
     --volume=$PWD:/workspace \
     --volume=$DATASET:/dataset \
-    patch_env:latest \
+    patch_sets_rl:latest \
     ${@-fish}
