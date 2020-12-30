@@ -4,43 +4,26 @@ import more_itertools
 from torch import Tensor, nn
 import torch.nn.functional as F
 import pytorch_lightning as pl
-from dataset import AdobeFontDataset
 from torchvision import transforms
 from torchsummary import summary
 from torchvision.transforms.functional import to_pil_image
 import matplotlib.pyplot as plt
 import pandas as pd
+import hydra
+from logging import getLogger
+from pathlib import Path
 
+from src.dataset import AdobeFontDataset
 from src.env import PatchSetsClassificationEnv
 import src.env_model
 import src.agent_model
 
 
-device = 'cuda'
+logger = getLogger(__name__)
 
 
 @st.cache(allow_output_mutation=True)
-def make_env():
-    model = src.env_model.Model.load_from_checkpoint(
-        checkpoint_path='/workspace/outputs/Default/2020-12-25/18-21-35/copied/src/env_model/epoch=1062.ckpt'
-    ).to(device)
-    hparams = model.hparams
-    model.eval()
-    summary(model)
-
-    image_size = 100
-    patch_size = hparams.patch_size
-    obs_size = 1 + 1
-    n_actions = (image_size - patch_size) ** 2
-    done_loss = 0
-
-    # dataset = [
-    #     (
-    #         torch.rand(1, image_size, image_size),
-    #         torch.randint(26, [1]).item(),
-    #     )
-    #     for i in range(100)
-    # ]
+def make_dataset() -> torch.utils.data.Dataset:
     dataset = AdobeFontDataset(
         path='/dataset/AdobeFontCharImages',
         transform=transforms.ToTensor(),
@@ -48,23 +31,37 @@ def make_env():
         upper=True,
         lower=False,
     )
+    return dataset
 
-    env = PatchSetsClassificationEnv(dataset, model, patch_size, done_loss)
+
+@st.cache(allow_output_mutation=True)
+def make_env(env_model_path: str, done_prob:float, device):
+    model = src.env_model.Model.load_from_checkpoint(checkpoint_path=env_model_path).to(
+        device
+    )
+    hparams = model.hparams
+    model.eval()
+    summary(model)
+
+    dataset = make_dataset()
+
+    patch_size = hparams.patch_size
+
+    env = PatchSetsClassificationEnv(dataset, model, patch_size, done_prob)
     return env
 
 
 @st.cache(allow_output_mutation=True)
-def make_agent(obs_size, n_actions, patch_size):
+def make_agent(agent_model_path: str, obs_size: int, patch_size: int, device):
     model = src.agent_model.Model(obs_size, patch_size).to(device)
-    model.load_state_dict(
-        torch.load('/workspace/outputs/Default/2020-12-26/17-01-17/best/model.pt')
-    )
+    model.load_state_dict(torch.load(agent_model_path))
     model.eval()
     summary(model)
     return model
 
 
-def predict_all_pach(
+# @st.cache(hash_funcs={Tensor: lambda x: x.cpu().detach().numpy()})
+def predict_all_patch(
     model: nn.Module,
     image: Tensor,
     patch_size: int,
@@ -87,6 +84,49 @@ def predict_all_pach(
     return predicted_all
 
 
+@st.cache(hash_funcs={Tensor: lambda x: x.cpu().detach().numpy()})
+def make_loss_map(predicted_all:Tensor, target:int, image:Tensor, patch_size:int) -> Tensor:
+    loss_map = F.cross_entropy(
+        predicted_all,
+        torch.full(
+            [len(predicted_all)],
+            target,
+            dtype=torch.long,
+            device=predicted_all.device,
+        ),
+        reduction='none',
+    ).reshape(
+        1,
+        image.shape[1] - patch_size + 1,
+        image.shape[2] - patch_size + 1,
+    )
+    return loss_map
+
+
+@st.cache(hash_funcs={Tensor: lambda x: x.cpu().detach().numpy()})
+def make_action_df(loss_map:Tensor, predicted_all:Tensor, label_list) -> pd.DataFrame:
+    loss_sorted, loss_ranking = loss_map.reshape(-1).sort()
+    loss_ranking_x = loss_ranking % loss_map.shape[2]
+    loss_ranking_y = loss_ranking // loss_map.shape[2]
+
+    df = pd.DataFrame(
+        dict(
+            action=loss_ranking.cpu().detach(),
+            x=loss_ranking_x.cpu().detach(),
+            y=loss_ranking_y.cpu().detach(),
+            loss=loss_sorted.cpu().detach(),
+            **{
+                alphabet: data
+                for alphabet, data in zip(
+                    label_list,
+                    predicted_all.softmax(1).T.cpu().detach(),
+                )
+            },
+        ),
+    )
+    return df
+
+
 def one_step(
     env,
     agent_model: nn.Module,
@@ -100,37 +140,24 @@ def one_step(
         col_loss_map,
         col_state,
         col_rl_map,
-        col_loss_dataflame,
+        col_action_dataframe,
         col_patch_select,
     ) = st.beta_columns([4, 2, 4, 3, 2])
 
     with col_loss_map:
         if step == 0:
-            predicted_all = predict_all_pach(env.model, image, patch_size)
+            predicted_all = predict_all_patch(env.model, image, patch_size)
         else:
-            predicted_all = predict_all_pach(
+            predicted_all = predict_all_patch(
                 env.model,
                 image,
                 patch_size,
                 torch.stack(env.trajectory['patch'], 1),
             )
-        loss_map = F.cross_entropy(
-            predicted_all,
-            torch.full(
-                [len(predicted_all)],
-                target,
-                dtype=torch.long,
-                device=predicted_all.device,
-            ),
-            reduction='none',
-        ).reshape(
-            1,
-            image.shape[1] - patch_size + 1,
-            image.shape[2] - patch_size + 1,
-        )
+        loss_map = make_loss_map(predicted_all, target, image, patch_size)
         st.write('Loss map')
         fig = plt.figure()
-        plt.imshow(loss_map.detach().cpu().numpy()[0])
+        plt.imshow(loss_map.cpu().detach().numpy()[0])
         plt.colorbar()
         st.pyplot(fig, True)
         plt.close()
@@ -140,13 +167,13 @@ def one_step(
 
         st.write('State')
         fig = plt.figure()
-        plt.imshow(obs[0].detach().cpu().numpy())
+        plt.imshow(obs[0].cpu().detach().numpy())
         plt.colorbar()
         st.pyplot(fig, True)
         plt.close()
 
         fig = plt.figure()
-        plt.imshow(obs[1].detach().cpu().numpy())
+        plt.imshow(obs[1].cpu().detach().numpy(), cmap='tab10', vmin=0, vmax=10)
         plt.colorbar()
         st.pyplot(fig, True)
         plt.close()
@@ -161,41 +188,22 @@ def one_step(
 
         st.write('Slect prob. map')
         fig = plt.figure()
-        plt.imshow(select_probs_map.detach().cpu().numpy())
+        plt.imshow(select_probs_map.cpu().detach().numpy())
         plt.colorbar()
         st.pyplot(fig, True)
         plt.close()
 
-    with col_loss_dataflame:
-        st.write('Low loss actions')
-
-        loss_sorted, loss_ranking = loss_map.reshape(-1).sort()
-        loss_ranking_x = loss_ranking % (image.shape[2] - patch_size + 1)
-        loss_ranking_y = loss_ranking // (image.shape[2] - patch_size + 1)
-
-        df = pd.DataFrame(
-            dict(
-                action=loss_ranking.detach().cpu(),
-                x=loss_ranking_x.detach().cpu(),
-                y=loss_ranking_y.detach().cpu(),
-                loss=loss_sorted.detach().cpu(),
-                **{
-                    alphabet: data
-                    for alphabet, data in zip(
-                        env.dataset.unique_alphabet,
-                        predicted_all.softmax(1).T.detach().cpu(),
-                    )
-                },
-            ),
-        )
+    with col_action_dataframe:
+        st.write('Action dataframe')
+        df = make_action_df(loss_map, predicted_all, env.dataset.unique_alphabet)
         st.dataframe(df)
 
     if default_action_mode == 'RL':
         best_x = (select_probs.argmax() % (image.shape[2] - patch_size + 1)).item()
         best_y = (select_probs.argmax() // (image.shape[2] - patch_size + 1)).item()
     elif default_action_mode == 'Minimum loss':
-        best_x = loss_ranking_x[0].item()
-        best_y = loss_ranking_y[0].item()
+        best_x = int(df['x'][0])
+        best_y = int(df['y'][0])
     else:
         assert False
 
@@ -220,35 +228,46 @@ def one_step(
             use_column_width=True,
             output_format='png',
         )
-        if not done:
-            done = st.checkbox(f'Done on step {step}', value=((step + 1) % 8 == 0))
-        else:
-            st.write('Done')
+        done = st.checkbox(f'Done on step {step}', value=((step + 1) % 8 == 0) or done)
     return done
 
 
-def main():
+@hydra.main(config_path='../config', config_name='app.yaml')
+def main(config):
+    logger.info('\n' + hydra.utils.OmegaConf.to_yaml(config))
+
     st.set_page_config(
         layout='wide',
         initial_sidebar_state='expanded',
     )
 
-    pl.seed_everything(0)
-
-    env = make_env()
-    dataset = env.dataset
-
-    image_size = 100
-    patch_size = env.model.hparams.patch_size
-
-    obs_size = 1 + 1
-    n_actions = (image_size - patch_size) ** 2
-
-    agent_model = make_agent(obs_size, n_actions, patch_size)
-
     st.write('# RL test app')
 
+    pl.seed_everything(config.seed)
+
+    st.write('## Setting')
+
+    agent_model_path_pattern = st.text_input(
+        'Agent model path pattern', value='**/best/model'
+    )
+    agent_model_path_pattern = f'{agent_model_path_pattern}.pt'
+    agent_model_path = st.selectbox(
+        f'Select agent model path from "{agent_model_path_pattern}"',
+        sorted(Path(hydra.utils.get_original_cwd()).glob(agent_model_path_pattern)),
+    )
+    st.write(f'`{agent_model_path}`')
+
+    env = make_env(config.env_model_path, 0.95, config.device)
+    dataset = env.dataset
+
+    patch_size = env.model.hparams.patch_size
+    obs_size = 2
+
+    agent_model = make_agent(agent_model_path, obs_size, patch_size, config.device)
+
     default_action = st.radio('Mode to select default action', ['RL', 'Minimum loss'])
+
+    st.sidebar.write('# Select data')
 
     mode_to_select = st.sidebar.radio(
         'Mode to select', ['index', 'font index & alphabet index', 'font & alphabet'], 1
@@ -305,7 +324,7 @@ def main():
     step = 0
     done = False
     while not done:
-        st.write(f'# step {step}')
+        st.write(f'## step {step}')
         done = one_step(
             env, agent_model, env.patch_size, image, target, step, default_action
         )
