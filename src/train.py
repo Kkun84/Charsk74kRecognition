@@ -10,7 +10,6 @@ import pfrl
 from pfrl.experiments import LinearInterpolationHook
 import hydra
 from logging import getLogger
-from omegaconf import OmegaConf
 
 from src.env import PatchSetsClassificationEnv
 import src.env_model
@@ -29,7 +28,7 @@ def entropy_coef_setter(env, agent, value):
 def main(config) -> None:
     all_done = False
     try:
-        logger.info('\n' + OmegaConf.to_yaml(config))
+        logger.info('\n' + hydra.utils.OmegaConf.to_yaml(config))
 
         shutil.copytree(
             Path(hydra.utils.get_original_cwd()) / 'src', Path.cwd() / 'copied' / 'src'
@@ -46,18 +45,8 @@ def main(config) -> None:
 
         image_size = 100
         patch_size = hparams.patch_size
-
         obs_size = 1 + 1
-        n_actions = (image_size - patch_size) ** 2
-        done_loss = 0.1
 
-        # dataset = [
-        #     (
-        #         torch.rand(1, image_size, image_size) * 100,
-        #         torch.randint(26, [1]),
-        #     )
-        #     for i in range(100)
-        # ]
         dataset = AdobeFontDataset(
             path='/dataset/AdobeFontCharImages',
             transform=transforms.ToTensor(),
@@ -66,9 +55,10 @@ def main(config) -> None:
             lower=False,
         )
 
-        env = PatchSetsClassificationEnv(dataset, model, patch_size, done_loss)
+        env = PatchSetsClassificationEnv(
+            dataset, model, patch_size, config.hparams.done_prob
+        )
 
-        # agent_model = src.agent_model.Model(obs_size, n_actions, patch_size)
         agent_model = src.agent_model.Model(obs_size, patch_size)
         summary(agent_model)
 
