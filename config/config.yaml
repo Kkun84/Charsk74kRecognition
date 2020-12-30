@@ -4,24 +4,24 @@ experiment_name: Default
 debug: False
 
 hparams:
-  done_loss: 0
-  total_steps_entropy_coef: 0.75
+  done_prob: 0.99
+  total_steps_entropy_coef: 1
   start_entropy_coef: 1e-1
-  end_entropy_coef: 0
+  end_entropy_coef: 1e-6
 
 env:
   checkpoint_path: /workspace/src/env_model/epoch=1062.ckpt
 
 agent:
   gpu: 0
-  gamma: 0.95
-  update_interval: 256
+  gamma: 0.9
+  update_interval: 1024
   minibatch_size: 64
 
 experiment:
   steps: 100_000
   eval_interval: 1024
-  eval_n_episodes: 16
+  eval_n_episodes: 104
   eval_n_steps: ~
   train_max_episode_len: 8
   eval_max_episode_len: 8
@@ -33,4 +33,6 @@ optim:
 
 hydra:
   run:
+    dir: ./outputs/${experiment_name}/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
     dir: ./outputs/${experiment_name}/${now:%Y-%m-%d}/${now:%H-%M-%S}
