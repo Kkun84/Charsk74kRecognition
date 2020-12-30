@@ -36,7 +36,7 @@ def make_dataset() -> torch.utils.data.Dataset:
 
 @st.cache(allow_output_mutation=True)
 def make_env(env_model_path: str, done_prob:float, device):
-    model = src.env_model.Model.load_from_checkpoint(checkpoint_path=env_model_path).to(
+    model = src.env_model.EnvModel.load_from_checkpoint(checkpoint_path=env_model_path).to(
         device
     )
     hparams = model.hparams

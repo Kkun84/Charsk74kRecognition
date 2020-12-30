@@ -9,8 +9,20 @@ hparams:
   start_entropy_coef: 1e-1
   end_entropy_coef: 1e-3
 
-env:
-  checkpoint_path: /workspace/src/env_model/epoch=1062.ckpt
+env_model:
+  patch_size: 25
+  hidden_n: 64
+  feature_n: 64
+  output_n: 26
+  pool_mode: max
+  seed: 0
+  batch_size: 64
+  num_workers: ~
+  max_epochs: ~
+  min_epochs: ~
+  patience: ~
+  optimizer: Adam
+  lr: 0.001
 
 agent:
   gpu: 0
@@ -23,8 +35,8 @@ experiment:
   eval_interval: 1024
   eval_n_episodes: 104
   eval_n_steps: ~
-  train_max_episode_len: 8
-  eval_max_episode_len: 8
+  train_max_episode_len: 16
+  eval_max_episode_len: 16
   use_tensorboard: True
 
 optim:

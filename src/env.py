@@ -27,6 +27,12 @@ class PatchSetsClassificationEnv(gym.Env):
         self.patch_size = patch_size
         self.done_prob = done_prob
 
+        self.patch_set_pool = []
+
+    def make_dataset(self):
+        self.patch_set_pool
+        return
+
     @staticmethod
     def crop(image: Tensor, x: int, y: int, patch_size: int) -> Tensor:
         assert image.dim() == 3
@@ -96,6 +102,9 @@ class PatchSetsClassificationEnv(gym.Env):
             self.last_likelihood_advantage = 0
             self.step_count = 0
             self.trajectory['observation'].append(observation)
+
+            self.patch_set_pool.append(([], data[1]))
+
             return observation
 
     def step(self, action: int) -> tuple:
@@ -108,6 +117,7 @@ class PatchSetsClassificationEnv(gym.Env):
 
             patch = self.crop(image, action_x, action_y, self.patch_size)
             self.trajectory['patch'].append(patch.detach().clone())
+            self.patch_set_pool[-1][0].append(patch.detach().cpu().clone())
 
             feature_set = self.model.encode(patch[None, None])
             if self.step_count > 0:
@@ -174,10 +184,10 @@ if __name__ == "__main__":
     from torchsummary import summary
     import pfrl
 
-    # pl.seed_everything(0)
+    pl.seed_everything(0)
 
-    model = src.env_model.Model.load_from_checkpoint(
-        checkpoint_path='/workspace/src/env_model/epoch=1062.ckpt'
+    model = src.env_model.EnvModel(
+        patch_size=25, hidden_n=1, feature_n=16, output_n=26, pool_mode='sum'
     )
     hparams = model.hparams
     summary(model)
@@ -199,15 +209,17 @@ if __name__ == "__main__":
 
     env = PatchSetsClassificationEnv(dataset, model, patch_size)
 
-    state = env.reset()
-    print(state.shape)
-    action = 0
-    state, reward, done, _ = env.step(action)
-    print(state.shape)
-    print(reward)
-    print(done)
-    action = 1
-    state, reward, done, _ = env.step(action)
-    print(state.shape)
-    print(reward)
-    print(done)
+    for _ in range(4):
+        state = env.reset()
+        print(state.shape)
+        action = 0
+        state, reward, done, _ = env.step(action)
+        print(state.shape)
+        print(reward)
+        print(done)
+        action = 1
+        state, reward, done, _ = env.step(action)
+        print(state.shape)
+        print(reward)
+        print(done)
+    pass

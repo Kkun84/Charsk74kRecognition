@@ -26,7 +26,7 @@ class AdobeFontDataset(torch.utils.data.Dataset):
 
         root = Path(path)
 
-        self.unique_font = sorted([i.name for i in (root / 'font').iterdir()])
+        self.unique_font = sorted([i.name for i in (root / 'font').iterdir()])[50:51]
         if use_font_index is not None:
             self.unique_font = [
                 x for i, x in enumerate(self.unique_font) if i in use_font_index

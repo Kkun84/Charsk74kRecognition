@@ -8,7 +8,7 @@ from pytorch_lightning.core.decorators import auto_move_data
 import src.set_module as sm
 
 
-class Model(pl.LightningModule):
+class EnvModel(pl.LightningModule):
     def __init__(
         self,
         patch_size: int,
@@ -16,8 +16,6 @@ class Model(pl.LightningModule):
         feature_n: int,
         output_n: int,
         pool_mode: str,
-        # patch_num_min: int,
-        # patch_num_max: int,
         seed: int = None,
         batch_size: int = None,
         num_workers: int = None,
@@ -26,15 +24,9 @@ class Model(pl.LightningModule):
         patience: int = None,
         optimizer: str = None,
         lr: float = None,
-        # data_split_num: int = None,
-        # data_use_num: int = None,
     ):
         super().__init__()
         self.save_hyperparameters()
-
-        # assert (
-        #     patch_num_min <= patch_num_max
-        # ), f'patch_num_min={patch_num_min}, patch_num_max={patch_num_max}'
 
         self.pool_mode = pool_mode
 
@@ -62,16 +54,10 @@ class Model(pl.LightningModule):
                 patch_set.shape[0] * patch_set.shape[1], *patch_set.shape[2:]
             )
             x = self.f_1(x)
-            # x = self.f_2_1(x) + self.pool(self.f_2_2(x), True)
-            # x = self.f_3_1(x) + self.pool(self.f_3_2(x), True)
-            # x = self.f_4(x)
             x = x.reshape(*patch_set.shape[:2], *x.shape[1:])
         elif isinstance(patch_set, list):
             x = patch_set
             x = [self.f_1(x) for x in x]
-            # x = [self.f_2_1(x) + self.pool(self.f_2_2(x), True) for x in x]
-            # x = [self.f_3_1(x) + self.pool(self.f_3_2(x), True) for x in x]
-            # x = [self.f_4(x) for x in x]
         else:
             assert False
         return x
@@ -115,22 +101,9 @@ class Model(pl.LightningModule):
     def _step(self, batch: List[Tensor]) -> Dict[str, Any]:
         x, y = batch
         batch_size = len(y)
-        # patch_sets = sm.cutout_patch2d(
-        #     x,
-        #     torch.randint(
-        #         self.hparams.patch_num_min,
-        #         self.hparams.patch_num_max + 1,
-        #         [batch_size],
-        #     ),
-        #     # [
-        #     #     torch.randint(
-        #     #         self.hparams.patch_num_min, self.hparams.patch_num_max + 1, [1]
-        #     #     )
-        #     # ]
-        #     # * batch_size,
-        #     self.hparams.patch_size,
-        # )
-        y_hat = self.forward(patch_sets)
+        y_hat = self.forward(x)
+        if y.device != y_hat.device:
+            y = y.to(y_hat.device)
         loss = F.cross_entropy(y_hat, y)
         accuracy = self.accuracy(y_hat, y)
         return {'batch_size': batch_size, 'loss': loss, 'accuracy': accuracy}
@@ -198,7 +171,7 @@ if __name__ == '__main__':
     patch_num_min = 1
     patch_num_max = 5
 
-    model = Model(
+    model = EnvModel(
         patch_size,
         hidden_n,
         feature_n,

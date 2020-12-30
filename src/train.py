@@ -2,7 +2,6 @@ import torch
 import pytorch_lightning as pl
 from pathlib import Path
 
-# import logging
 from dataset import AdobeFontDataset
 from torchvision import transforms
 from torchsummary import summary
@@ -10,11 +9,12 @@ import pfrl
 from pfrl.experiments import LinearInterpolationHook
 import hydra
 from logging import getLogger
+import shutil
 
 from src.env import PatchSetsClassificationEnv
 import src.env_model
 import src.agent_model
-import shutil
+from src.env_model_trainer import EnvModelTrainer
 
 
 logger = getLogger(__name__)
@@ -36,15 +36,12 @@ def main(config) -> None:
 
         pl.seed_everything(0)
 
-        model = src.env_model.Model.load_from_checkpoint(
-            checkpoint_path=config.env.checkpoint_path
-        )
-        hparams = model.hparams
-        summary(model)
-        model.eval()
+        env_model = src.env_model.EnvModel(**config.env_model).cuda()
+        summary(env_model)
+        env_model.eval()
 
         image_size = 100
-        patch_size = hparams.patch_size
+        patch_size = 25
         obs_size = 1 + 1
 
         dataset = AdobeFontDataset(
@@ -56,8 +53,10 @@ def main(config) -> None:
         )
 
         env = PatchSetsClassificationEnv(
-            dataset, model, patch_size, config.hparams.done_prob
+            dataset, env_model, patch_size, config.hparams.done_prob
         )
+
+        env_model_trainer = EnvModelTrainer(env_model, 1024)
 
         agent_model = src.agent_model.Model(obs_size, patch_size)
         summary(agent_model)
@@ -67,6 +66,7 @@ def main(config) -> None:
         agent = pfrl.agents.PPO(model=agent_model, optimizer=optimizer, **config.agent)
 
         step_hooks = []
+        step_hooks.append(env_model_trainer)
         if None not in [
             config.hparams.start_entropy_coef,
             config.hparams.end_entropy_coef,
