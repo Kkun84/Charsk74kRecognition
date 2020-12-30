@@ -7,7 +7,7 @@ hparams:
   done_prob: 0.99
   total_steps_entropy_coef: 1
   start_entropy_coef: 1e-1
-  end_entropy_coef: 1e-6
+  end_entropy_coef: 1e-3
 
 env:
   checkpoint_path: /workspace/src/env_model/epoch=1062.ckpt
