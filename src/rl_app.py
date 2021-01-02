@@ -12,6 +12,7 @@ import pandas as pd
 import hydra
 from logging import getLogger
 from pathlib import Path
+import yaml
 
 from src.dataset import AdobeFontDataset
 from src.env import PatchSetsClassificationEnv
@@ -35,10 +36,11 @@ def make_dataset() -> torch.utils.data.Dataset:
 
 
 @st.cache(allow_output_mutation=True)
-def make_env(env_model_path: str, done_prob:float, device):
-    model = src.env_model.EnvModel.load_from_checkpoint(checkpoint_path=env_model_path).to(
-        device
-    )
+def make_env(env_model_path: str, done_prob: float, device):
+    model = src.env_model.EnvModel.load_from_checkpoint(
+        checkpoint_path='/workspace/src/epoch=1062.ckpt'
+    ).to(device)
+    model.load_state_dict(state_dict=torch.load(env_model_path))
     hparams = model.hparams
     model.eval()
     summary(model)
@@ -85,7 +87,9 @@ def predict_all_patch(
 
 
 @st.cache(hash_funcs={Tensor: lambda x: x.cpu().detach().numpy()})
-def make_loss_map(predicted_all:Tensor, target:int, image:Tensor, patch_size:int) -> Tensor:
+def make_loss_map(
+    predicted_all: Tensor, target: int, image: Tensor, patch_size: int
+) -> Tensor:
     loss_map = F.cross_entropy(
         predicted_all,
         torch.full(
@@ -104,7 +108,7 @@ def make_loss_map(predicted_all:Tensor, target:int, image:Tensor, patch_size:int
 
 
 @st.cache(hash_funcs={Tensor: lambda x: x.cpu().detach().numpy()})
-def make_action_df(loss_map:Tensor, predicted_all:Tensor, label_list) -> pd.DataFrame:
+def make_action_df(loss_map: Tensor, predicted_all: Tensor, label_list) -> pd.DataFrame:
     loss_sorted, loss_ranking = loss_map.reshape(-1).sort()
     loss_ranking_x = loss_ranking % loss_map.shape[2]
     loss_ranking_y = loss_ranking // loss_map.shape[2]
@@ -196,7 +200,7 @@ def one_step(
     with col_action_dataframe:
         st.write('Action dataframe')
         df = make_action_df(loss_map, predicted_all, env.dataset.unique_alphabet)
-        st.dataframe(df)
+        st.dataframe(df.head())
 
     if default_action_mode == 'RL':
         best_x = (select_probs.argmax() % (image.shape[2] - patch_size + 1)).item()
@@ -228,7 +232,7 @@ def one_step(
             use_column_width=True,
             output_format='png',
         )
-        done = st.checkbox(f'Done on step {step}', value=((step + 1) % 8 == 0) or done)
+        done = st.checkbox(f'Done on step {step}', value=((step + 1) % 16 == 0) or done)
     return done
 
 
@@ -245,25 +249,60 @@ def main(config):
 
     pl.seed_everything(config.seed)
 
-    st.write('## Setting')
+    device = st.selectbox('device', ['cpu', 'cuda:0', 'cuda:1', 'cuda:2', 'cuda:3'])
 
+    st.write('## Select agent model')
     agent_model_path_pattern = st.text_input(
-        'Agent model path pattern', value='**/best/model'
+        'Agent model path pattern', value='**//**/*h/model'
     )
     agent_model_path_pattern = f'{agent_model_path_pattern}.pt'
+    path_list = sorted(
+        Path(hydra.utils.get_original_cwd()).glob(agent_model_path_pattern)
+    )
     agent_model_path = st.selectbox(
         f'Select agent model path from "{agent_model_path_pattern}"',
-        sorted(Path(hydra.utils.get_original_cwd()).glob(agent_model_path_pattern)),
+        path_list,
+        index=len(path_list) - 1,
     )
     st.write(f'`{agent_model_path}`')
 
-    env = make_env(config.env_model_path, 0.95, config.device)
+    st.write('## Select env model')
+    env_model_path_pattern = st.text_input(
+        'Env model path pattern', value='**//**/env_model*'
+    )
+    env_model_path_pattern = f'{env_model_path_pattern}.pth'
+    path_list = sorted(
+        Path(hydra.utils.get_original_cwd()).glob(env_model_path_pattern)
+    )
+    env_model_path = st.selectbox(
+        f'Select agent model path from "{env_model_path_pattern}"',
+        path_list,
+        index=len(path_list) - 1,
+    )
+    st.write(f'`{env_model_path}`')
+
+    with st.beta_expander("See yaml file"):
+        yaml_path_pattern = st.text_input(
+            'Yaml file path pattern', value='**//**/config'
+        )
+        yaml_path_pattern = f'{yaml_path_pattern}.yaml'
+        path_list = sorted(Path(hydra.utils.get_original_cwd()).glob(yaml_path_pattern))
+        yaml_path = st.selectbox(
+            f'Select agent model path from "{yaml_path_pattern}"',
+            path_list,
+            index=len(path_list) - 1,
+        )
+        st.write(f'`{yaml_path}`')
+        with open(yaml_path, 'r') as f:
+            st.write(yaml.safe_load(f))
+
+    env = make_env(env_model_path, 0.99, device)
     dataset = env.dataset
 
     patch_size = env.model.hparams.patch_size
     obs_size = 2
 
-    agent_model = make_agent(agent_model_path, obs_size, patch_size, config.device)
+    agent_model = make_agent(agent_model_path, obs_size, patch_size, device)
 
     default_action = st.radio('Mode to select default action', ['RL', 'Minimum loss'])
 
@@ -285,7 +324,7 @@ def main(config):
             f'Font index (0~{len(dataset.unique_font) - 1})',
             0,
             len(dataset.unique_font) - 1,
-            value=50,
+            value=3,
             step=1,
         )
         alphabet_index = st.sidebar.number_input(
@@ -297,7 +336,7 @@ def main(config):
         )
         data_index = dataset.font_alphabet_to_index(font_index, alphabet_index)
     elif mode_to_select == 'font & alphabet':
-        font = st.sidebar.selectbox('Font', dataset.unique_font, index=50)
+        font = st.sidebar.selectbox('Font', dataset.unique_font, index=3)
         alphabet = st.sidebar.selectbox('Alphabet', dataset.unique_alphabet)
         font_index = dataset.unique_font.index(font)
         alphabet_index = dataset.unique_alphabet.index(alphabet)

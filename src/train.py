@@ -24,6 +24,14 @@ def entropy_coef_setter(env, agent, value):
     agent.entropy_coef = value
 
 
+# def evaluate(env, agent, evaluator, step, eval_score):
+#     obs = env.reset()
+#     action, _ = agent(obs)
+
+#     accuracy
+#     evaluator.tb_writer.add_scalar('eval/accuracy', accuracy, step)
+
+
 @hydra.main(config_path='../config', config_name='config.yaml')
 def main(config) -> None:
     all_done = False
@@ -36,7 +44,13 @@ def main(config) -> None:
 
         pl.seed_everything(0)
 
-        env_model = src.env_model.EnvModel(**config.env_model).cuda()
+        if 'checkpoint_path' in config.env_model:
+            env_model = src.env_model.EnvModel.load_from_checkpoint(
+                config.env_model.checkpoint_path
+            )
+        else:
+            env_model = src.env_model.EnvModel(**config.env_model)
+        env_model = env_model.to(f'cuda:{config.gpu}')
         summary(env_model)
         env_model.eval()
 
@@ -53,10 +67,10 @@ def main(config) -> None:
         )
 
         env = PatchSetsClassificationEnv(
-            dataset, env_model, patch_size, config.hparams.done_prob
+            dataset, env_model, patch_size, config.hparams.done_prob, collect_data=True
         )
 
-        env_model_trainer = EnvModelTrainer(env_model, 1024)
+        env_model_trainer = EnvModelTrainer(env_model)
 
         agent_model = src.agent_model.Model(obs_size, patch_size)
         summary(agent_model)
@@ -66,7 +80,6 @@ def main(config) -> None:
         agent = pfrl.agents.PPO(model=agent_model, optimizer=optimizer, **config.agent)
 
         step_hooks = []
-        step_hooks.append(env_model_trainer)
         if None not in [
             config.hparams.start_entropy_coef,
             config.hparams.end_entropy_coef,
@@ -83,6 +96,8 @@ def main(config) -> None:
             )
             step_hooks.append(LinearInterpolationHook(**kwargs))
 
+        evaluation_hooks = [env_model_trainer]
+
         pfrl.experiments.train_agent_with_evaluation(
             agent=agent,
             env=env,
@@ -90,6 +105,7 @@ def main(config) -> None:
             outdir='.',
             **config.experiment,
             step_hooks=step_hooks,
+            evaluation_hooks=evaluation_hooks,
         )
         logger.info('All done.')
         all_done = True

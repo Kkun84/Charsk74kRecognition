@@ -3,19 +3,18 @@ from logging import getLogger
 from typing import Any, Dict, List, Iterable, Union
 import torch
 from torch import Tensor, nn
-from torch.utils.data import DataLoader
+from torch.utils.data import Dataset, DataLoader
 
 from src.env import PatchSetsClassificationEnv
 from src.env_model import EnvModel
 from tqdm import tqdm
 
+
 logger = getLogger(__name__)
 
 
 class EnvModelTrainer:
-    def __init__(self, env_model: EnvModel, update_step: int):
-        self.update_step = update_step
-
+    def __init__(self, env_model: EnvModel):
         self.batch_size = env_model.hparams.batch_size
         self.optimizer = env_model.configure_optimizers()
 
@@ -28,12 +27,12 @@ class EnvModelTrainer:
         y = torch.tensor(y)
         return x, y
 
-    def train(self, env: PatchSetsClassificationEnv, agent, step: int):
-        if step % self.update_step != 0:
-            return
+    def train(
+        self, env: PatchSetsClassificationEnv, agent, evaluator, step: int, eval_score
+    ):
 
-        model = env.model
-        dataset = env.patch_set_pool
+        model: EnvModel = env.model
+        dataset: Dataset = list(env.make_dataset()) * 10
 
         dataloader = DataLoader(
             dataset,
@@ -47,17 +46,26 @@ class EnvModelTrainer:
         model.train()
 
         total_loss = 0
-        for batch_idx, data in tqdm(enumerate(dataloader)):
+        print()
+        for batch_idx, data in enumerate(tqdm(dataloader)):
             loss = model.training_step(data, batch_idx)
+
+            self.optimizer.zero_grad()
             loss.backward()
             self.optimizer.step()
 
-            total_loss += loss.item() * len(data)
+            total_loss += loss.item() * len(data[0])
         total_loss /= len(dataset)
+
+        evaluator.tb_writer.add_scalar('env/train_loss', total_loss, step)
 
         logger.info(total_loss)
 
         model.eval()
 
-    def __call__(self, env, agent, step):
-        return self.train(env, agent, step)
+        if step % 100_000 == 0:
+            torch.save(model.state_dict(), f'env_model_{step}.pth')
+        torch.save(model.state_dict(), 'env_model_finish.pth')
+
+    def __call__(self, env, agent, evaluator, step, eval_score):
+        self.train(env, agent, evaluator, step, eval_score)

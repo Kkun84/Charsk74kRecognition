@@ -2,9 +2,7 @@ debug: False
 
 seed: 0
 
-device: cuda:0
-
-env_model_path: /workspace/src/env_model/epoch=1062.ckpt
+# env_model_path: /workspace/src/epoch=1062.ckpt
 
 hydra:
   run:

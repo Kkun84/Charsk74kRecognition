@@ -18,6 +18,7 @@ class PatchSetsClassificationEnv(gym.Env):
         model: nn.Module,
         patch_size: int,
         done_prob: float = 1,
+        collect_data: bool = False,
     ):
         self.action_space = gym.spaces.Discrete((100 - patch_size + 1) ** 2)
         self.observation_space = gym.spaces.Box(low=0, high=1, shape=[2, 100, 100])
@@ -27,11 +28,15 @@ class PatchSetsClassificationEnv(gym.Env):
         self.patch_size = patch_size
         self.done_prob = done_prob
 
-        self.patch_set_pool = []
+        self.collect_data = collect_data
+        self.patch_set_buffer = []
 
     def make_dataset(self):
-        self.patch_set_pool
-        return
+        dataset, self.patch_set_buffer = (
+            self.patch_set_buffer,
+            self.patch_set_buffer[-1:],
+        )
+        return dataset
 
     @staticmethod
     def crop(image: Tensor, x: int, y: int, patch_size: int) -> Tensor:
@@ -103,7 +108,8 @@ class PatchSetsClassificationEnv(gym.Env):
             self.step_count = 0
             self.trajectory['observation'].append(observation)
 
-            self.patch_set_pool.append(([], data[1]))
+            if self.collect_data:
+                self.patch_set_buffer.append(([], data[1]))
 
             return observation
 
@@ -117,7 +123,8 @@ class PatchSetsClassificationEnv(gym.Env):
 
             patch = self.crop(image, action_x, action_y, self.patch_size)
             self.trajectory['patch'].append(patch.detach().clone())
-            self.patch_set_pool[-1][0].append(patch.detach().cpu().clone())
+            if self.collect_data:
+                self.patch_set_buffer[-1][0].append(patch.detach().cpu().clone())
 
             feature_set = self.model.encode(patch[None, None])
             if self.step_count > 0:
@@ -150,17 +157,22 @@ class PatchSetsClassificationEnv(gym.Env):
             self.trajectory['loss'].append(loss)
 
             prob = likelihood.softmax(1)[0]
-            done = prob[target] > self.done_prob
+            # done = prob[target] > self.done_prob
+            done = prob.max() > self.done_prob
 
             if not done:
                 likelihood_advantage = (
                     prob[target]
                     - torch.cat([prob[:target], prob[target + 1 :]], 0).max()
                 ).item()
-                reward = likelihood_advantage - self.last_likelihood_advantage
-            else:
+            elif prob[target] > self.done_prob:
                 likelihood_advantage = 1
-                reward = likelihood_advantage - self.last_likelihood_advantage
+            elif prob.max() > self.done_prob:
+                likelihood_advantage = -1
+            else:
+                assert False
+            reward = likelihood_advantage - self.last_likelihood_advantage
+
             self.last_likelihood_advantage = likelihood_advantage
             self.trajectory['reward'].append(reward)
             self.step_count += 1
@@ -179,10 +191,7 @@ class PatchSetsClassificationEnv(gym.Env):
 if __name__ == "__main__":
     import src.env_model
     import src.agent_model
-    from dataset import AdobeFontDataset
-    from torchvision import transforms
     from torchsummary import summary
-    import pfrl
 
     pl.seed_everything(0)
 
@@ -222,4 +231,3 @@ if __name__ == "__main__":
         print(state.shape)
         print(reward)
         print(done)
-    pass

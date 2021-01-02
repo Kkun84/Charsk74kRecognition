@@ -8,6 +8,7 @@ from PIL import Image
 import pandas as pd
 from typing import Iterable, Tuple
 
+
 logger = getLogger(__name__)
 
 
@@ -26,7 +27,7 @@ class AdobeFontDataset(torch.utils.data.Dataset):
 
         root = Path(path)
 
-        self.unique_font = sorted([i.name for i in (root / 'font').iterdir()])[50:51]
+        self.unique_font = sorted([i.name for i in (root / 'font').iterdir()])
         if use_font_index is not None:
             self.unique_font = [
                 x for i, x in enumerate(self.unique_font) if i in use_font_index
