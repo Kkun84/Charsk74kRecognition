@@ -40,7 +40,7 @@ def make_env(env_model_path: str, done_prob: float, device):
     model = src.env_model.EnvModel.load_from_checkpoint(
         checkpoint_path='/workspace/src/epoch=1062.ckpt'
     ).to(device)
-    model.load_state_dict(state_dict=torch.load(env_model_path))
+    model.load_state_dict(state_dict=torch.load(env_model_path, map_location='cpu'))
     hparams = model.hparams
     model.eval()
     summary(model)
@@ -56,7 +56,7 @@ def make_env(env_model_path: str, done_prob: float, device):
 @st.cache(allow_output_mutation=True)
 def make_agent(agent_model_path: str, obs_size: int, patch_size: int, device):
     model = src.agent_model.Model(obs_size, patch_size).to(device)
-    model.load_state_dict(torch.load(agent_model_path))
+    model.load_state_dict(torch.load(agent_model_path, map_location='cpu'))
     model.eval()
     summary(model)
     return model
