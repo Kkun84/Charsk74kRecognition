@@ -69,35 +69,42 @@ class PatchSetsClassificationEnv(gym.Env):
         self.patch_set_buffer = patch_set_buffer
 
     @staticmethod
-    def crop(image: Tensor, x: int, y: int, patch_size: Dict[str, int]) -> Tensor:
+    def crop(
+        image: Tensor, x: int, y: int, patch_size: Dict[str, int], copy: bool = True
+    ) -> Tensor:
         assert image.dim() == 3
         patch = image[:, y : y + patch_size['y'], x : x + patch_size['x']]
+        if copy:
+            patch = patch.clone()
         assert patch.shape == torch.Size(
             [1, patch_size['y'], patch_size['x']]
         ), f"{patch.shape} == {torch.Size([1, patch_size['y'], patch_size['x']])}"
         return patch
 
     @staticmethod
-    def make_mask(
-        image: Tensor,
-        x: int = None,
-        y: int = None,
-        patch_size: Dict[str, int] = None,
-        mask: Tensor = None,
+    def make_patch(image: Tensor, x: int, y: int, patch_size: Dict[str, int]) -> Tensor:
+        patch = PatchSetsClassificationEnv.crop(image, x, y, patch_size)
+        return patch
+        canvas = torch.zeros(
+            [1, image.shape[1], image.shape[2]], dtype=torch.float, device=image.device
+        )
+        patch = PatchSetsClassificationEnv.crop(image, x, y, patch_size)
+        PatchSetsClassificationEnv.crop(canvas, x, y, patch_size)[:] = patch
+        return canvas
+
+    @staticmethod
+    def make_patched_area(
+        height: int,
+        width: int,
+        x: int,
+        y: int,
+        patch_size: Dict[str, int],
+        device=None,
     ) -> Tensor:
-        assert image.dim() == 3
-        if mask is None:
-            mask = torch.zeros([1, *image.shape[1:]], device=image.device)
-        else:
-            mask = mask.clone()
-        if x is not None and y is not None and patch_size is not None:
-            assert mask.dim() == 3
-            assert image.shape[1:] == mask.shape[1:]
-            assert 0 <= y <= image.shape[1] - patch_size['y']
-            assert 0 <= x <= image.shape[2] - patch_size['x']
-            mask[:, y : y + patch_size['y'], x : x + patch_size['x']] += 1
-        elif not (x is None and y is None and patch_size is None):
-            assert False
+        mask = torch.zeros([1, height, width], dtype=torch.bool, device=device)
+        assert 0 <= x <= width - patch_size['x']
+        assert 0 <= y <= height - patch_size['y']
+        mask[:, y : y + patch_size['y'], x : x + patch_size['x']] = True
         return mask
 
     @staticmethod
@@ -109,6 +116,7 @@ class PatchSetsClassificationEnv(gym.Env):
         return observation
 
     def reset(self, data_index: int = None) -> Tensor:
+        device = self.env_model.device
         with torch.no_grad():
             self.trajectory = {
                 i: []
@@ -132,11 +140,13 @@ class PatchSetsClassificationEnv(gym.Env):
             else:
                 data = self.dataset[data_index]
 
-            self.data = (data[0].to(self.env_model.device), data[1])
+            self.data = (data[0].to(device), data[1])
 
             image = self.data[0]
-            self.mask = self.make_mask(image)
-            observation = self.make_observation(image, self.mask)
+            self.patched_area = torch.zeros(
+                [1, image.shape[1], image.shape[2]], dtype=torch.float, device=device
+            )
+            observation = self.make_observation(image, self.patched_area)
 
             self.last_output_advantage = 0
             self.step_count = 0
@@ -148,6 +158,7 @@ class PatchSetsClassificationEnv(gym.Env):
             return observation
 
     def step(self, action: int) -> tuple:
+        device = self.env_model.device
         with torch.no_grad():
             image, target = self.data
 
@@ -155,7 +166,9 @@ class PatchSetsClassificationEnv(gym.Env):
             action_x = action % (image.shape[2] - self.patch_size['x'] + 1)
             action_y = action // (image.shape[2] - self.patch_size['y'] + 1)
 
-            patch = self.crop(image, action_x, action_y, self.patch_size)
+            patch = PatchSetsClassificationEnv.make_patch(
+                image, action_x, action_y, self.patch_size
+            )
             self.trajectory['patch'].append(patch.detach().clone())
 
             if self.patch_set_buffer is not None:
@@ -179,15 +192,20 @@ class PatchSetsClassificationEnv(gym.Env):
             self.trajectory['output'].append(output.detach().clone())
 
             image = self.data[0]
-            self.mask = self.make_mask(
-                image, action_x, action_y, self.patch_size, self.mask
+            self.patched_area = self.patched_area + self.make_patched_area(
+                image.shape[1],
+                image.shape[2],
+                action_x,
+                action_y,
+                self.patch_size,
+                device,
             )
-            observation = self.make_observation(image, self.mask)
+            observation = self.make_observation(image, self.patched_area)
             self.trajectory['observation'].append(observation)
 
             loss = F.cross_entropy(
                 output,
-                torch.tensor([target], dtype=torch.long, device=self.env_model.device),
+                torch.tensor([target], dtype=torch.long, device=device),
             ).item()
             self.trajectory['loss'].append(loss)
 

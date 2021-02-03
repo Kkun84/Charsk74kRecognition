@@ -1,9 +1,0 @@
-debug: False
-
-seed: 0
-
-# env_model_path: /workspace/src/epoch=1062.ckpt
-
-hydra:
-  run:
-    dir: ./app_outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
