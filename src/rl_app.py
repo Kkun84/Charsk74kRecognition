@@ -1,8 +1,8 @@
-from typing import Dict
+import sys
 from logging import getLogger
 from pathlib import Path
+from typing import Dict
 
-import hydra
 import matplotlib.pyplot as plt
 import more_itertools
 import pandas as pd
@@ -13,7 +13,7 @@ import torch
 import torch.nn.functional as F
 import yaml
 from hydra.utils import DictConfig
-from torch import Tensor, nn
+from torch import Tensor
 from torchsummary import summary
 from torchvision import transforms
 from torchvision.transforms.functional import to_pil_image
@@ -69,32 +69,49 @@ def make_agent_model(
 
 
 # @st.cache(hash_funcs={Tensor: lambda x: x.cpu().detach().numpy()})
+def make_all_patch(image: Tensor, patch_size: Dict[str, int]) -> Tensor:
+    height, width = image.shape[1:]
+    y, x = torch.meshgrid(
+        torch.arange(height - patch_size['y'] + 1),
+        torch.arange(width - patch_size['x'] + 1),
+    )
+    x = x.flatten()
+    y = y.flatten()
+    all_patch = [
+        PatchSetsClassificationEnv.make_patch(image, u, v, patch_size)
+        for u, v in zip(x, y)
+    ]
+    all_patch = torch.stack(all_patch)
+    return all_patch
+
+
+# @st.cache(hash_funcs={Tensor: lambda x: x.cpu().detach().numpy()})
 def predict_all_patch(
     env_model: EnvModel,
-    image: Tensor,
-    patch_size: Dict[str, int],
+    all_patch: Tensor,
     additional_patch_set: Tensor = None,
 ):
-    patch_all = (
-        image.unfold(1, patch_size['y'], 1)
-        .unfold(2, patch_size['x'], 1)
-        .reshape(-1, 1, 1, patch_size['y'], patch_size['x'])
-    )
+    assert all_patch.dim() == 4, all_patch.shape
+    assert len(all_patch) > 1, all_patch.shape
+    all_patch = all_patch[:, None]
     if additional_patch_set is not None:
-        patch_all = torch.cat(
+        all_patch = torch.cat(
             [
-                patch_all,
-                additional_patch_set.expand(patch_all.shape[0], -1, -1, -1, -1),
+                all_patch,
+                additional_patch_set.expand(all_patch.shape[0], -1, -1, -1, -1),
             ],
             1,
         )
-    predicted_all = env_model(patch_all)
+    assert all_patch.dim() == 5, all_patch.shape
+    predicted_all = env_model(all_patch)
+    assert predicted_all.dim() == 2, predicted_all.shape
+    assert len(predicted_all) == len(all_patch), predicted_all.shape
     return predicted_all
 
 
-@st.cache(hash_funcs={Tensor: lambda x: x.cpu().detach().numpy()})
+# @st.cache(hash_funcs={Tensor: lambda x: x.cpu().detach().numpy()})
 def make_loss_map(
-    predicted_all: Tensor, target: int, image: Tensor, patch_size: int
+    predicted_all: Tensor, target: int, image: Tensor, patch_size: Dict[str, int]
 ) -> Tensor:
     loss_map = F.cross_entropy(
         predicted_all,
@@ -155,23 +172,23 @@ def one_step(
         col_patch_select,
     ) = st.beta_columns([4, 2, 4, 3, 2])
 
-    with col_loss_map:
-        if step == 0:
-            predicted_all = predict_all_patch(env_model, image, patch_size)
-        else:
-            predicted_all = predict_all_patch(
-                env_model,
-                image,
-                patch_size,
-                additional_patch_set=torch.stack(env.trajectory['patch']),
-            )
-        loss_map = make_loss_map(predicted_all, target, image, patch_size)
-        st.write('Loss map')
-        fig = plt.figure()
-        plt.imshow(loss_map.cpu().detach().numpy()[0])
-        plt.colorbar()
-        st.pyplot(fig, True)
-        plt.close()
+    # with col_loss_map:
+    #     all_patch = make_all_patch(image, patch_size)
+    #     if step == 0:
+    #         predicted_all = predict_all_patch(env_model, all_patch)
+    #     else:
+    #         predicted_all = predict_all_patch(
+    #             env_model,
+    #             all_patch,
+    #             additional_patch_set=torch.stack(env.trajectory['patch']),
+    #         )
+    #     loss_map = make_loss_map(predicted_all, target, image, patch_size)
+    #     st.write('Loss map')
+    #     fig = plt.figure()
+    #     plt.imshow(loss_map.cpu().detach().numpy()[0])
+    #     plt.colorbar()
+    #     st.pyplot(fig, True)
+    #     plt.close()
 
     with col_state:
         obs = env.trajectory['observation'][-1]
@@ -197,19 +214,19 @@ def one_step(
             image.shape[2] - patch_size['x'] + 1,
         )
 
-        st.write('Slect prob. map')
+        st.write('Select prob. map')
         fig = plt.figure()
         plt.imshow(select_probs_map.cpu().detach().numpy())
         plt.colorbar()
         st.pyplot(fig, True)
         plt.close()
 
-    with col_action_dataframe:
-        st.write('Action dataframe')
-        df = make_action_df(
-            loss_map, predicted_all, env.dataset.has_uniques['alphabet']
-        )
-        st.dataframe(df.head())
+    # with col_action_dataframe:
+    #     st.write('Action dataframe')
+    #     df = make_action_df(
+    #         loss_map, predicted_all, env.dataset.has_uniques['alphabet']
+    #     )
+    #     st.dataframe(df.head())
 
     if default_action_mode == 'RL':
         best_x = (select_probs.argmax() % (image.shape[2] - patch_size['x'] + 1)).item()
@@ -238,8 +255,12 @@ def one_step(
         action = action_x + action_y * (image.shape[2] - patch_size['x'] + 1)
 
         _, _, done, _ = env.step(action)
+        patch = env.trajectory['patch'][-1]
+        patch = patch[0:1]
+        assert patch.dim() == 3
+        assert patch.shape[0] == 1
         st.image(
-            to_pil_image(env.trajectory['patch'][-1].cpu()),
+            to_pil_image(patch.cpu()),
             use_column_width=True,
             output_format='png',
         )
@@ -260,46 +281,42 @@ def main():
     with st.beta_expander('Setting'):
         device = st.selectbox('device', ['cpu', 'cuda:0', 'cuda:1', 'cuda:2', 'cuda:3'])
 
+        folder = st.text_input('Select folder', value='outputs/**/*/.hydra/')
+        path_list = sorted(Path().glob(folder))
+        path_list = [i.parent for i in path_list]
+        folder_path = st.selectbox(f'Select folder from "{folder}/.hydra/"', path_list)
+        st.write(f'`{folder_path}`')
+
         st.write('## Select agent model')
         agent_model_path_pattern = st.text_input(
-            'Agent model path pattern', value='outputs/**//**/*h/model'
+            'Agent model path pattern', value='**/*/model.pt'
         )
-        agent_model_path_pattern = f'{agent_model_path_pattern}.pt'
-        path_list = sorted(
-            Path(hydra.utils.get_original_cwd()).glob(agent_model_path_pattern)
-        )
+        path_list = sorted(Path(folder_path).glob(agent_model_path_pattern))
         agent_model_path = st.selectbox(
-            f'Select agent model path from "{agent_model_path_pattern}"',
+            f'Select agent model path from "{Path(folder_path, agent_model_path_pattern)}"',
             path_list,
-            index=len(path_list) - 1,
         )
         st.write(f'`{agent_model_path}`')
 
         st.write('## Select env model')
         env_model_path_pattern = st.text_input(
-            'Env model path pattern', value='outputs/**//**/env_model_finish'
+            'Env model path pattern', value='**/env_model/env_model_finish.pt'
         )
-        env_model_path_pattern = f'{env_model_path_pattern}.pth'
-        path_list = sorted(
-            Path(hydra.utils.get_original_cwd()).glob(env_model_path_pattern)
-        )
+        path_list = sorted(Path(folder_path).glob(env_model_path_pattern))
         env_model_path = st.selectbox(
-            f'Select agent model path from "{env_model_path_pattern}"',
+            f'Select agent model path from "{Path(folder_path, env_model_path_pattern)}"',
             path_list,
-            index=len(path_list) - 1,
         )
         st.write(f'`{env_model_path}`')
 
         st.write('## Select config file')
         yaml_path_pattern = st.text_input(
-            'Yaml file path pattern', value='outputs/**//**/config'
+            'Yaml config path pattern', value='**/*/config.yaml'
         )
-        yaml_path_pattern = f'{yaml_path_pattern}.yaml'
-        path_list = sorted(Path(hydra.utils.get_original_cwd()).glob(yaml_path_pattern))
+        path_list = sorted(Path(folder_path).glob(yaml_path_pattern))
         yaml_path = st.selectbox(
-            f'Select agent model path from "{yaml_path_pattern}"',
+            f'Select agent model path from "{Path(folder_path, yaml_path_pattern)}"',
             path_list,
-            index=len(path_list) - 1,
         )
         st.write(f'`{yaml_path}`')
         with open(yaml_path, 'r') as f:
@@ -417,10 +434,13 @@ def main():
 
     st.sidebar.write('patch')
     for i in more_itertools.chunked(env.trajectory['patch'], 4):
-        for col, image in zip(st.sidebar.beta_columns(4), list(i) + [None] * 3):
-            if image is not None:
+        for col, patch in zip(st.sidebar.beta_columns(4), list(i) + [None] * 3):
+            if patch is not None:
+                patch = patch[0:1]
+                assert patch.dim() == 3
+                assert patch.shape[0] == 1
                 col.image(
-                    to_pil_image(image.cpu()),
+                    to_pil_image(patch.cpu()),
                     use_column_width=True,
                     output_format='png',
                 )

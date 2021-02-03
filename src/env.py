@@ -1,13 +1,12 @@
 import random
 from logging import getLogger
-from typing import Dict, Iterable, List, Optional, Tuple, Type
+from typing import Dict, List, Optional, Tuple, Type
 
 import gym
 import pytorch_lightning as pl
 import torch
 import torch.nn.functional as F
-from torch import Tensor, nn
-from torch._C import device
+from torch import Tensor
 from torch.utils.data import Dataset
 
 from src.env_model import EnvModel
@@ -51,6 +50,7 @@ class PatchSetsClassificationEnv(gym.Env):
         dataset: Dataset,
         env_model: EnvModel,
         patch_size: Dict[str, int],
+        patch_type: str = 'coord',
         done_threshold: float = 0,
         patch_set_buffer: Optional[PatchSetBuffer] = None,
     ):
@@ -62,6 +62,7 @@ class PatchSetsClassificationEnv(gym.Env):
         self.dataset = dataset
         self.env_model = env_model
         self.patch_size = patch_size
+        self.patch_type = patch_type
         self.done_threshold = done_threshold
 
         self._random_index = []
@@ -76,21 +77,52 @@ class PatchSetsClassificationEnv(gym.Env):
         patch = image[:, y : y + patch_size['y'], x : x + patch_size['x']]
         if copy:
             patch = patch.clone()
-        assert patch.shape == torch.Size(
-            [1, patch_size['y'], patch_size['x']]
-        ), f"{patch.shape} == {torch.Size([1, patch_size['y'], patch_size['x']])}"
+        assert patch.shape[1] == patch_size['y'], patch.shape
+        assert patch.shape[2] == patch_size['x'], patch.shape
         return patch
+
+    @staticmethod
+    def make_coord_map(height: int, width: int, device) -> Tensor:
+        x = torch.linspace(-1, 1, width, device=device)
+        y = torch.linspace(-1, 1, height, device=device)
+        y_map, x_map = torch.meshgrid(y, x)
+        coord_map = torch.stack([x_map, y_map])
+        return coord_map
 
     @staticmethod
     def make_patch(image: Tensor, x: int, y: int, patch_size: Dict[str, int]) -> Tensor:
         patch = PatchSetsClassificationEnv.crop(image, x, y, patch_size)
         return patch
-        canvas = torch.zeros(
-            [1, image.shape[1], image.shape[2]], dtype=torch.float, device=image.device
+
+    @staticmethod
+    def make_coord_patch(
+        image: Tensor, x: int, y: int, patch_size: Dict[str, int]
+    ) -> Tensor:
+        patch = PatchSetsClassificationEnv.crop(image, x, y, patch_size)
+        coord_map = PatchSetsClassificationEnv.make_coord_map(
+            image.shape[1], image.shape[2], image.device
+        )
+        coord_map = PatchSetsClassificationEnv.crop(coord_map, x, y, patch_size)
+        patch = torch.cat([patch, coord_map], 0)
+        return patch
+
+    @staticmethod
+    def make_mask_patch(
+        image: Tensor, x: int, y: int, patch_size: Dict[str, int]
+    ) -> Tensor:
+        canvas = torch.full(
+            [1, image.shape[1], image.shape[2]],
+            0.5,
+            dtype=torch.float,
+            device=image.device,
         )
         patch = PatchSetsClassificationEnv.crop(image, x, y, patch_size)
-        PatchSetsClassificationEnv.crop(canvas, x, y, patch_size)[:] = patch
-        return canvas
+        PatchSetsClassificationEnv.crop(canvas, x, y, patch_size, False)[:] = patch
+        patched_area = PatchSetsClassificationEnv.make_patched_area(
+            image.shape[1], image.shape[2], x, y, patch_size, image.device
+        )
+        x = torch.cat([canvas, patched_area.float()], 0)
+        return x
 
     @staticmethod
     def make_patched_area(
@@ -166,9 +198,20 @@ class PatchSetsClassificationEnv(gym.Env):
             action_x = action % (image.shape[2] - self.patch_size['x'] + 1)
             action_y = action // (image.shape[2] - self.patch_size['y'] + 1)
 
-            patch = PatchSetsClassificationEnv.make_patch(
-                image, action_x, action_y, self.patch_size
-            )
+            if self.patch_type == 'patch':
+                patch = PatchSetsClassificationEnv.make_patch(
+                    image, action_x, action_y, self.patch_size
+                )
+            elif self.patch_type == 'coord':
+                patch = PatchSetsClassificationEnv.make_coord_patch(
+                    image, action_x, action_y, self.patch_size
+                )
+            elif self.patch_type == 'mask':
+                patch = PatchSetsClassificationEnv.make_mask_patch(
+                    image, action_x, action_y, self.patch_size
+                )
+            else:
+                assert False, self.patch_type
             self.trajectory['patch'].append(patch.detach().clone())
 
             if self.patch_set_buffer is not None:
@@ -192,13 +235,16 @@ class PatchSetsClassificationEnv(gym.Env):
             self.trajectory['output'].append(output.detach().clone())
 
             image = self.data[0]
-            self.patched_area = self.patched_area + self.make_patched_area(
-                image.shape[1],
-                image.shape[2],
-                action_x,
-                action_y,
-                self.patch_size,
-                device,
+            self.patched_area = (
+                self.patched_area
+                + self.make_patched_area(
+                    image.shape[1],
+                    image.shape[2],
+                    action_x,
+                    action_y,
+                    self.patch_size,
+                    device,
+                ).float()
             )
             observation = self.make_observation(image, self.patched_area)
             self.trajectory['observation'].append(observation)

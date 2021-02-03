@@ -16,18 +16,22 @@ class EnvModel(pl.LightningModule):
         self,
         output_n: int,
         pool_mode: str,
+        input_n: int = 3,
         # optimizer: str = None,
         # lr: float = None,
     ):
         super().__init__()
         self.save_hyperparameters()
 
+        self.input_n = input_n
+        self.output_n = output_n
+
         self.pool_mode = pool_mode
 
         self.accuracy = pl.metrics.Accuracy()
 
         self.f_1 = nn.Sequential(
-            nn.Conv2d(1, 64, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(input_n, 64, kernel_size=3, stride=1, padding=1),
             nn.MaxPool2d(2),
             nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=1),
             nn.MaxPool2d(2),
@@ -37,13 +41,9 @@ class EnvModel(pl.LightningModule):
             nn.AdaptiveAvgPool2d(1),
             nn.Flatten(),
             nn.Linear(64, 64),
-            nn.ReLU(),
-            nn.Linear(64, 64),
         )
 
         self.f_2 = nn.Sequential(
-            nn.Linear(64, 64),
-            nn.ReLU(),
             nn.Linear(64, 64),
             nn.ReLU(),
             nn.Linear(64, output_n),
@@ -119,7 +119,7 @@ class EnvModel(pl.LightningModule):
         accuracy = items['accuracy']
         self.log('train_loss', loss, on_step=True)
         self.log('train_accuracy', accuracy, on_step=True, prog_bar=True)
-        return loss
+        return loss, accuracy
 
     def validation_step(self, batch: List[Tensor], batch_idx: int) -> Dict[str, Any]:
         items = self._step(batch)

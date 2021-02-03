@@ -1,14 +1,14 @@
 from logging import getLogger
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Union
+from typing import Iterable
 
 import torch
-from torch import Tensor, nn
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from src.env import PatchSetBuffer, PatchSetsClassificationEnv
+from src.env import PatchSetBuffer
 from src.env_model import EnvModel
+
 
 logger = getLogger(__name__)
 
@@ -54,27 +54,39 @@ class EnvModelTrainer:
         model.train()
 
         total_loss = 0
+        total_accuracy = 0
         for epoch in tqdm(range(epochs)):
             epoch_loss = 0
+            epoch_accuracy = 0
             for batch_index, data in enumerate(tqdm(dataloader, leave=False)):
-                loss = model.training_step(data, batch_index)
+                loss, accuracy = model.training_step(data, batch_index)
 
                 self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
 
                 epoch_loss += loss.item()
+                epoch_accuracy += accuracy.item()
             epoch_loss /= len(dataloader)
-            logger.info(f'epoch={epoch}, epoch_loss={epoch_loss}')
+            epoch_accuracy /= len(dataloader)
+            logger.info(
+                f'epoch={epoch}, epoch_loss={epoch_loss}, epoch_accuracy={epoch_accuracy}'
+            )
             evaluator.tb_writer.add_scalar(
                 'env/epoch_loss', epoch_loss, self.total_epoch + epoch
             )
+            evaluator.tb_writer.add_scalar(
+                'env/epoch_accuracy', epoch_accuracy, self.total_epoch + epoch
+            )
             total_loss += epoch_loss
+            total_accuracy += epoch_accuracy
         self.total_epoch += self.epochs
 
         total_loss /= epoch + 1
-        logger.info(f'total_loss={total_loss}')
+        total_accuracy /= epoch + 1
+        logger.info(f'step={step}, total_loss={total_loss}, total_loss={total_loss}')
         evaluator.tb_writer.add_scalar('env/train_loss', total_loss, step)
+        evaluator.tb_writer.add_scalar('env/train_accuracy', total_accuracy, step)
 
         evaluator.tb_writer.add_scalar('env/total_epoch', self.total_epoch, step)
         evaluator.tb_writer.add_scalar('env/data_num', len(dataloader.dataset), step)

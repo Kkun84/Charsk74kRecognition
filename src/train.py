@@ -14,7 +14,9 @@ from dataset import AdobeFontDataset
 from src.agent_model import AgentModel
 from src.env import PatchSetBuffer, PatchSetsClassificationEnv
 from src.env_model import EnvModel
+from src.env_model_evaluator import EnvModelEvaluator
 from src.env_model_trainer import EnvModelTrainer
+
 
 logger = getLogger(__name__)
 
@@ -48,12 +50,12 @@ def main(config) -> None:
         else:
             env_model = EnvModel(**config.env_model)
         if config.gpu is not None:
-            env_model = env_model.to(f'cuda:{config.gpu}')
+            env_model: EnvModel = env_model.to(f'cuda:{config.gpu}')
         summary(env_model)
         env_model.eval()
 
-        train_patch_set_buffer = PatchSetBuffer(**config.patch_set_buffer)
-        valid_patch_set_buffer = PatchSetBuffer(**config.patch_set_buffer)
+        train_patch_set_buffer = PatchSetBuffer(**config.patch_set_buffer.train)
+        valid_patch_set_buffer = PatchSetBuffer(**config.patch_set_buffer.valid)
 
         train_dataset = AdobeFontDataset(
             transform=transforms.ToTensor(), **config.dataset.train
@@ -89,6 +91,11 @@ def main(config) -> None:
             optimizer=env_optimizer,
             **config.env_model_trainer,
         )
+        env_model_evaluator = EnvModelEvaluator(
+            env_model=env_model,
+            patch_set_buffer=valid_patch_set_buffer,
+            **config.env_model_evaluator,
+        )
 
         agent = pfrl.agents.PPO(
             model=agent_model, optimizer=agent_optimizer, **config.agent
@@ -111,7 +118,7 @@ def main(config) -> None:
             )
             step_hooks.append(LinearInterpolationHook(**kwargs))
 
-        evaluation_hooks = [env_model_trainer]
+        evaluation_hooks = [env_model_trainer, env_model_evaluator]
 
         pfrl.experiments.train_agent_with_evaluation(
             agent=agent,
