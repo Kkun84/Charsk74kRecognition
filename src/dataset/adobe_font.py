@@ -1,12 +1,14 @@
 import enum
 from logging import getLogger
 import itertools
+from torch.functional import Tensor
 from tqdm import tqdm
 from pathlib import Path
 import torch
 from PIL import Image
 import pandas as pd
-from typing import Iterable, Tuple
+from typing import Dict, Iterable, Union, Optional, Tuple, Any, Callable, List
+import yaml
 
 
 logger = getLogger(__name__)
@@ -15,75 +17,61 @@ logger = getLogger(__name__)
 class AdobeFontDataset(torch.utils.data.Dataset):
     def __init__(
         self,
-        path: str,
-        transform=None,
-        target_transform=None,
+        root: str,
+        data_type: Union[str, Iterable[str]],
+        transform: Optional[Callable[[Image.Image], Any]] = None,
+        target_transform: Optional[Callable[[Dict[str, Union[str, int]]], Any]] = (
+            lambda y: y['alphabet_id']
+        ),
         upper: bool = True,
         lower: bool = True,
-        use_font_index: Iterable = None,
     ):
         self.transform = transform
         self.target_transform = target_transform
 
-        root = Path(path)
+        root: Path = Path(root)
+        self.data_type = data_type
 
-        self.unique_font = sorted([i.name for i in (root / 'font').iterdir()])
-        if use_font_index is not None:
-            self.unique_font = [
-                x for i, x in enumerate(self.unique_font) if i in use_font_index
-            ]
-        self.unique_alphabet = sorted([i.name for i in (root / 'alphabet').iterdir()])
-        if upper == False:
-            self.unique_alphabet = [i for i in self.unique_alphabet if i[:3] != 'cap']
-        if lower == False:
-            self.unique_alphabet = [i for i in self.unique_alphabet if i[:5] != 'small']
-
-        df = pd.read_csv(root / 'list.csv').sort_values('FONT')
-        self.unique_category = sorted(df['CATEGORY'].unique())
-        self.unique_sub_category = sorted(df['SUB-CATEGORY'].unique())
-
-        self.data = []
-        self.path = []
-        for (fi, font), (ai, alphabet) in tqdm(
-            itertools.product(
-                enumerate(self.unique_font), enumerate(self.unique_alphabet)
-            ),
-            total=len(self.unique_font) * len(self.unique_alphabet),
-        ):
-            path = root / 'font' / font / (alphabet + '_' + font + '.png')
-            image = Image.open(path)
-            self.path.append(path)
-
-            # tmp = df[df['FONT'] == font]
-            # category = tmp['CATEGORY'].iat[0]
-            # sub_category = tmp['SUB-CATEGORY'].iat[0]
-            self.data.append(
-                (
-                    image,
-                    {
-                        'font': fi,
-                        'alphabet': ai,
-                        # 'category': self.unique_category.index(category),
-                        # 'sub_category': self.unique_sub_category.index(sub_category),
-                    },
-                )
+        if isinstance(data_type, str):
+            self.data_property = pd.read_csv(
+                root / f'{self.data_type}.csv', index_col=0
+            )
+        else:
+            self.data_property = pd.concat(
+                [pd.read_csv(root / f'{i}.csv', index_col=0) for i in self.data_type]
             )
 
-    def font_alphabet_to_index(self, font_index: int, alphabet_index: int) -> int:
-        return len(self.unique_alphabet) * font_index + alphabet_index
+        if upper == False:
+            self.data_property = self.data_property[
+                ~self.data_property['alphabet'].str.startswith('cap')
+            ]
+        if lower == False:
+            self.data_property = self.data_property[
+                ~self.data_property['alphabet'].str.startswith('small')
+            ]
 
-    def index_to_font(self, data_index: int) -> int:
-        font_index = data_index // len(self.unique_alphabet)
-        return font_index
+        with open(root / 'list.yaml') as file:
+            self.uniques = yaml.safe_load(file)
+        self.has_uniques = {}
+        for label in self.uniques.keys():
+            self.has_uniques[label] = sorted(
+                self.data_property[label].unique().tolist()
+            )
 
-    def index_to_alphabet(self, data_index: int) -> int:
-        alphabet_index = data_index % len(self.unique_alphabet)
-        return alphabet_index
+        self.data: List[Tuple[Image.Image, Dict[str, Union[str, int]]]] = []
+        self.data_property['image'] = None
+        for index, item in tqdm(list(self.data_property.iterrows())):
+            data_path = (
+                root / item['split'] / (item['alphabet'] + '_' + item['font'] + '.png')
+            )
+            image = Image.open(data_path)
+            self.data.append((image, dict(item)))
+            self.data_property.loc[index, 'image'] = image
 
     def __len__(self):
-        return len(self.path)
+        return len(self.data)
 
-    def __getitem__(self, index):
+    def __getitem__(self, index: int) -> Tuple[Image.Image, Any]:
         x, y = self.data[index]
         if self.transform is not None:
             x = self.transform(x)
@@ -93,36 +81,105 @@ class AdobeFontDataset(torch.utils.data.Dataset):
 
 
 if __name__ == "__main__":
-    path = '/dataset/AdobeFontCharImages'
-    dataset = AdobeFontDataset(
-        path=path,
-        transform=None,
-        target_transform=None,
-        upper=True,
-        lower=True,
+    root = '/dataset/AdobeFontCharImages/splitted/'
+    dataset = AdobeFontDataset(root=root, data_type='test_data', upper=True, lower=True)
+    print(
+        len(dataset),
+        len(dataset.has_uniques['alphabet']),
+        len(dataset.has_uniques['font']),
+        dataset.has_uniques['alphabet'],
     )
-    print(len(dataset), dataset.unique_alphabet)
+    print(dataset[0])
+    print(dataset[-1])
+    print()
+    assert len(dataset.has_uniques['alphabet']) == 52
+
     dataset = AdobeFontDataset(
-        path=path,
-        transform=None,
-        target_transform=None,
+        root=root, data_type='test_data', upper=False, lower=True
+    )
+    print(
+        len(dataset),
+        len(dataset.has_uniques['alphabet']),
+        len(dataset.has_uniques['font']),
+        dataset.has_uniques['alphabet'],
+    )
+    print()
+    assert len(dataset.has_uniques['alphabet']) == 26
+
+    dataset = AdobeFontDataset(
+        root=root, data_type='train_data_0', upper=True, lower=True
+    )
+    print(
+        len(dataset),
+        len(dataset.has_uniques['alphabet']),
+        len(dataset.has_uniques['font']),
+        dataset.has_uniques['alphabet'],
+    )
+    print()
+    assert len(dataset.has_uniques['alphabet']) == 52
+
+    dataset = AdobeFontDataset(
+        root=root,
+        data_type=[
+            'train_data_0',
+            'train_data_1',
+            'train_data_2',
+            'train_data_3',
+            'train_data_4',
+        ],
         upper=True,
         lower=False,
     )
-    print(len(dataset), dataset.unique_alphabet)
+    print(
+        len(dataset),
+        len(dataset.has_uniques['alphabet']),
+        len(dataset.has_uniques['font']),
+        dataset.has_uniques['alphabet'],
+    )
+    print()
+    assert len(dataset.has_uniques['alphabet']) == 26
+
     dataset = AdobeFontDataset(
-        path=path,
-        transform=None,
-        target_transform=None,
-        upper=False,
+        root=root,
+        data_type=[
+            'train_data_0',
+            'train_data_1',
+            'train_data_2',
+            'train_data_3',
+            'train_data_4',
+            'test_data',
+        ],
+        upper=True,
         lower=True,
     )
-    print(len(dataset), dataset.unique_alphabet)
+    print(
+        len(dataset),
+        len(dataset.has_uniques['alphabet']),
+        len(dataset.has_uniques['font']),
+        dataset.has_uniques['alphabet'],
+    )
+    print()
+    assert len(dataset.has_uniques['alphabet']) == 52
+
     dataset = AdobeFontDataset(
-        path=path,
-        transform=None,
-        target_transform=None,
+        root=root,
+        data_type=[
+            'train_data_0',
+            'train_data_1',
+            'train_data_2',
+            'train_data_3',
+            'train_data_4',
+            'test_data',
+        ],
         upper=False,
         lower=False,
     )
-    print(len(dataset), dataset.unique_alphabet)
+    print(
+        len(dataset),
+        len(dataset.has_uniques['alphabet']),
+        len(dataset.has_uniques['font']),
+        dataset.has_uniques['alphabet'],
+    )
+    print()
+    assert len(dataset.font_list) == 0
+    assert len(dataset.has_uniques['alphabet']) == 0

@@ -1,21 +1,20 @@
-import torch
-import pytorch_lightning as pl
+import shutil
+from logging import getLogger
 from pathlib import Path
 
-from dataset import AdobeFontDataset
-from torchvision import transforms
-from torchsummary import summary
-import pfrl
-from pfrl.experiments import LinearInterpolationHook
 import hydra
-from logging import getLogger
-import shutil
+import pfrl
+import pytorch_lightning as pl
+import torch
+from pfrl.experiments import LinearInterpolationHook
+from torchsummary import summary
+from torchvision import transforms
 
-from src.env import PatchSetsClassificationEnv
-import src.env_model
-import src.agent_model
+from dataset import AdobeFontDataset
+from src.agent_model import AgentModel
+from src.env import PatchSetBuffer, PatchSetsClassificationEnv
+from src.env_model import EnvModel
 from src.env_model_trainer import EnvModelTrainer
-
 
 logger = getLogger(__name__)
 
@@ -44,40 +43,56 @@ def main(config) -> None:
 
         pl.seed_everything(0)
 
-        if 'checkpoint_path' in config.env_model:
-            env_model = src.env_model.EnvModel.load_from_checkpoint(
-                config.env_model.checkpoint_path
-            )
+        if 'checkpoint_path' in config.env_model and False:
+            env_model = EnvModel.load_from_checkpoint(config.env_model.checkpoint_path)
         else:
-            env_model = src.env_model.EnvModel(**config.env_model)
-        env_model = env_model.to(f'cuda:{config.gpu}')
+            env_model = EnvModel(**config.env_model)
+        if config.gpu is not None:
+            env_model = env_model.to(f'cuda:{config.gpu}')
         summary(env_model)
         env_model.eval()
 
-        image_size = 100
-        patch_size = 25
-        obs_size = 1 + 1
+        train_patch_set_buffer = PatchSetBuffer(**config.patch_set_buffer)
+        valid_patch_set_buffer = PatchSetBuffer(**config.patch_set_buffer)
 
-        dataset = AdobeFontDataset(
-            path='/dataset/AdobeFontCharImages',
-            transform=transforms.ToTensor(),
-            target_transform=lambda x: x['alphabet'],
-            upper=True,
-            lower=False,
+        train_dataset = AdobeFontDataset(
+            transform=transforms.ToTensor(), **config.dataset.train
+        )
+        valid_dataset = AdobeFontDataset(
+            transform=transforms.ToTensor(), **config.dataset.valid
         )
 
-        env = PatchSetsClassificationEnv(
-            dataset, env_model, patch_size, config.hparams.done_prob, collect_data=True
+        train_env = PatchSetsClassificationEnv(
+            dataset=train_dataset,
+            env_model=env_model,
+            **config.env,
+            patch_set_buffer=train_patch_set_buffer,
+        )
+        valid_env = PatchSetsClassificationEnv(
+            dataset=valid_dataset,
+            env_model=env_model,
+            **config.env,
+            patch_set_buffer=valid_patch_set_buffer,
         )
 
-        env_model_trainer = EnvModelTrainer(env_model)
-
-        agent_model = src.agent_model.Model(obs_size, patch_size)
+        agent_model = AgentModel(**config.agent_model)
         summary(agent_model)
 
-        optimizer = torch.optim.Adam(agent_model.parameters(), **config.optim)
+        env_optimizer = torch.optim.Adam(env_model.parameters(), **config.optim.env)
+        agent_optimizer = torch.optim.Adam(
+            agent_model.parameters(), **config.optim.agent
+        )
 
-        agent = pfrl.agents.PPO(model=agent_model, optimizer=optimizer, **config.agent)
+        env_model_trainer = EnvModelTrainer(
+            env_model=env_model,
+            patch_set_buffer=train_patch_set_buffer,
+            optimizer=env_optimizer,
+            **config.env_model_trainer,
+        )
+
+        agent = pfrl.agents.PPO(
+            model=agent_model, optimizer=agent_optimizer, **config.agent
+        )
 
         step_hooks = []
         if None not in [
@@ -100,8 +115,8 @@ def main(config) -> None:
 
         pfrl.experiments.train_agent_with_evaluation(
             agent=agent,
-            env=env,
-            eval_env=None,
+            env=train_env,
+            eval_env=valid_env,
             outdir='.',
             **config.experiment,
             step_hooks=step_hooks,

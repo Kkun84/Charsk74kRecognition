@@ -1,88 +1,94 @@
-import streamlit as st
-import torch
-import more_itertools
-from torch import Tensor, nn
-import torch.nn.functional as F
-import pytorch_lightning as pl
-from torchvision import transforms
-from torchsummary import summary
-from torchvision.transforms.functional import to_pil_image
-import matplotlib.pyplot as plt
-import pandas as pd
-import hydra
+from typing import Dict
 from logging import getLogger
 from pathlib import Path
-import yaml
 
+import hydra
+import matplotlib.pyplot as plt
+import more_itertools
+import pandas as pd
+import pfrl
+import pytorch_lightning as pl
+import streamlit as st
+import torch
+import torch.nn.functional as F
+import yaml
+from hydra.utils import DictConfig
+from torch import Tensor, nn
+from torchsummary import summary
+from torchvision import transforms
+from torchvision.transforms.functional import to_pil_image
+
+from src.agent_model import AgentModel
 from src.dataset import AdobeFontDataset
 from src.env import PatchSetsClassificationEnv
-import src.env_model
-import src.agent_model
-
+from src.env_model import EnvModel
 
 logger = getLogger(__name__)
 
 
-@st.cache(allow_output_mutation=True)
-def make_dataset() -> torch.utils.data.Dataset:
-    dataset = AdobeFontDataset(
-        path='/dataset/AdobeFontCharImages',
-        transform=transforms.ToTensor(),
-        target_transform=lambda x: x['alphabet'],
-        upper=True,
-        lower=False,
-    )
+@st.cache()
+def make_dataset(config_dataset: DictConfig) -> AdobeFontDataset:
+    if 'test' in config_dataset:
+        dataset = AdobeFontDataset(
+            transform=transforms.ToTensor(), **config_dataset.test
+        )
+    else:
+        dataset = AdobeFontDataset(
+            transform=transforms.ToTensor(), **config_dataset.valid
+        )
     return dataset
 
 
 @st.cache(allow_output_mutation=True)
-def make_env(env_model_path: str, done_prob: float, device):
-    model = src.env_model.EnvModel.load_from_checkpoint(
-        checkpoint_path='/workspace/src/epoch=1062.ckpt'
-    ).to(device)
-    model.load_state_dict(state_dict=torch.load(env_model_path, map_location='cpu'))
-    hparams = model.hparams
-    model.eval()
-    summary(model)
-
-    dataset = make_dataset()
-
-    patch_size = hparams.patch_size
-
-    env = PatchSetsClassificationEnv(dataset, model, patch_size, done_prob)
-    return env
+def make_env_model(
+    config_env_model: DictConfig, env_model_path: str, dataset: AdobeFontDataset, device
+) -> EnvModel:
+    env_model = EnvModel(**config_env_model)
+    env_model.load_state_dict(torch.load(env_model_path, map_location='cpu'))
+    env_model: EnvModel = env_model.to(device)
+    env_model.eval()
+    summary(env_model)
+    return env_model
 
 
 @st.cache(allow_output_mutation=True)
-def make_agent(agent_model_path: str, obs_size: int, patch_size: int, device):
-    model = src.agent_model.Model(obs_size, patch_size).to(device)
-    model.load_state_dict(torch.load(agent_model_path, map_location='cpu'))
-    model.eval()
-    summary(model)
-    return model
+def make_agent_model(
+    config_agent_model: DictConfig, agent_model_path: str, device
+) -> pfrl.agent.Agent:
+    if 'input_n' in config_agent_model:
+        agent_model = AgentModel(**config_agent_model)
+    else:
+        agent_model = AgentModel(**config_agent_model, input_n=2)
+    agent_model.load_state_dict(torch.load(agent_model_path, map_location='cpu'))
+    agent_model = agent_model.to(device)
+    agent_model.eval()
+    summary(agent_model)
+    return agent_model
+    agent = pfrl.agents.PPO(model=agent_model, optimizer=None)
+    return agent
 
 
 # @st.cache(hash_funcs={Tensor: lambda x: x.cpu().detach().numpy()})
 def predict_all_patch(
-    model: nn.Module,
+    env_model: EnvModel,
     image: Tensor,
-    patch_size: int,
+    patch_size: Dict[str, int],
     additional_patch_set: Tensor = None,
 ):
     patch_all = (
-        image.unfold(1, patch_size, 1)
-        .unfold(2, patch_size, 1)
-        .reshape(-1, 1, patch_size, patch_size)
+        image.unfold(1, patch_size['y'], 1)
+        .unfold(2, patch_size['x'], 1)
+        .reshape(-1, 1, 1, patch_size['y'], patch_size['x'])
     )
     if additional_patch_set is not None:
         patch_all = torch.cat(
             [
                 patch_all,
-                additional_patch_set.expand(patch_all.shape[0], -1, -1, -1),
+                additional_patch_set.expand(patch_all.shape[0], -1, -1, -1, -1),
             ],
             1,
         )
-    predicted_all = model(patch_all)
+    predicted_all = env_model(patch_all)
     return predicted_all
 
 
@@ -101,13 +107,13 @@ def make_loss_map(
         reduction='none',
     ).reshape(
         1,
-        image.shape[1] - patch_size + 1,
-        image.shape[2] - patch_size + 1,
+        image.shape[1] - patch_size['y'] + 1,
+        image.shape[2] - patch_size['x'] + 1,
     )
     return loss_map
 
 
-@st.cache(hash_funcs={Tensor: lambda x: x.cpu().detach().numpy()})
+# @st.cache(hash_funcs={Tensor: lambda x: x.cpu().detach().numpy()})
 def make_action_df(loss_map: Tensor, predicted_all: Tensor, label_list) -> pd.DataFrame:
     loss_sorted, loss_ranking = loss_map.reshape(-1).sort()
     loss_ranking_x = loss_ranking % loss_map.shape[2]
@@ -132,9 +138,10 @@ def make_action_df(loss_map: Tensor, predicted_all: Tensor, label_list) -> pd.Da
 
 
 def one_step(
-    env,
-    agent_model: nn.Module,
-    patch_size: int,
+    env: PatchSetsClassificationEnv,
+    env_model: EnvModel,
+    agent_model: AgentModel,
+    patch_size: Dict[str, int],
     image: Tensor,
     target: int,
     step: int,
@@ -150,13 +157,13 @@ def one_step(
 
     with col_loss_map:
         if step == 0:
-            predicted_all = predict_all_patch(env.model, image, patch_size)
+            predicted_all = predict_all_patch(env_model, image, patch_size)
         else:
             predicted_all = predict_all_patch(
-                env.model,
+                env_model,
                 image,
                 patch_size,
-                torch.stack(env.trajectory['patch'], 1),
+                additional_patch_set=torch.stack(env.trajectory['patch']),
             )
         loss_map = make_loss_map(predicted_all, target, image, patch_size)
         st.write('Loss map')
@@ -186,8 +193,8 @@ def one_step(
         obs = env.trajectory['observation'][-1]
         select_probs = agent_model(obs[None])[0].probs[0]
         select_probs_map = select_probs.reshape(
-            image.shape[1] - patch_size + 1,
-            image.shape[2] - patch_size + 1,
+            image.shape[1] - patch_size['y'] + 1,
+            image.shape[2] - patch_size['x'] + 1,
         )
 
         st.write('Slect prob. map')
@@ -199,12 +206,16 @@ def one_step(
 
     with col_action_dataframe:
         st.write('Action dataframe')
-        df = make_action_df(loss_map, predicted_all, env.dataset.unique_alphabet)
+        df = make_action_df(
+            loss_map, predicted_all, env.dataset.has_uniques['alphabet']
+        )
         st.dataframe(df.head())
 
     if default_action_mode == 'RL':
-        best_x = (select_probs.argmax() % (image.shape[2] - patch_size + 1)).item()
-        best_y = (select_probs.argmax() // (image.shape[2] - patch_size + 1)).item()
+        best_x = (select_probs.argmax() % (image.shape[2] - patch_size['x'] + 1)).item()
+        best_y = (
+            select_probs.argmax() // (image.shape[2] - patch_size['y'] + 1)
+        ).item()
     elif default_action_mode == 'Minimum loss':
         best_x = int(df['x'][0])
         best_y = int(df['y'][0])
@@ -215,16 +226,16 @@ def one_step(
         action_x = st.slider(
             f'action_x_{step}',
             0,
-            image.shape[2] - patch_size,
+            image.shape[2] - patch_size['x'],
             value=best_x,
         )
         action_y = st.slider(
             f'action_y_{step}',
             0,
-            image.shape[1] - patch_size,
+            image.shape[1] - patch_size['y'],
             value=best_y,
         )
-        action = action_x + action_y * (image.shape[2] - patch_size + 1)
+        action = action_x + action_y * (image.shape[2] - patch_size['x'] + 1)
 
         _, _, done, _ = env.step(action)
         st.image(
@@ -236,9 +247,8 @@ def one_step(
     return done
 
 
-@hydra.main(config_path='../config', config_name='app.yaml')
-def main(config):
-    logger.info('\n' + hydra.utils.OmegaConf.to_yaml(config))
+def main():
+    pl.seed_everything(0)
 
     st.set_page_config(
         layout='wide',
@@ -247,14 +257,12 @@ def main(config):
 
     st.write('# RL test app')
 
-    pl.seed_everything(config.seed)
-
     with st.beta_expander('Setting'):
         device = st.selectbox('device', ['cpu', 'cuda:0', 'cuda:1', 'cuda:2', 'cuda:3'])
 
         st.write('## Select agent model')
         agent_model_path_pattern = st.text_input(
-            'Agent model path pattern', value='**//**/*h/model'
+            'Agent model path pattern', value='**/outputs/**/*h/model'
         )
         agent_model_path_pattern = f'{agent_model_path_pattern}.pt'
         path_list = sorted(
@@ -269,7 +277,7 @@ def main(config):
 
         st.write('## Select env model')
         env_model_path_pattern = st.text_input(
-            'Env model path pattern', value='**//**/env_model*'
+            'Env model path pattern', value='**/outputs/**/env_model_finish'
         )
         env_model_path_pattern = f'{env_model_path_pattern}.pth'
         path_list = sorted(
@@ -282,9 +290,9 @@ def main(config):
         )
         st.write(f'`{env_model_path}`')
 
-    with st.beta_expander('Display yaml file'):
+        st.write('## Select config file')
         yaml_path_pattern = st.text_input(
-            'Yaml file path pattern', value='**//**/config'
+            'Yaml file path pattern', value='**/outputs/**/config'
         )
         yaml_path_pattern = f'{yaml_path_pattern}.yaml'
         path_list = sorted(Path(hydra.utils.get_original_cwd()).glob(yaml_path_pattern))
@@ -295,15 +303,15 @@ def main(config):
         )
         st.write(f'`{yaml_path}`')
         with open(yaml_path, 'r') as f:
-            st.write(yaml.safe_load(f))
+            config = yaml.safe_load(f)
+            st.write(config)
+            config = DictConfig(config)
 
-    env = make_env(env_model_path, 0.99, device)
-    dataset = env.dataset
+    dataset = make_dataset(config.dataset)
+    env_model = make_env_model(config.env_model, env_model_path, dataset, device)
+    env = PatchSetsClassificationEnv(dataset=dataset, env_model=env_model, **config.env)
 
-    patch_size = env.model.hparams.patch_size
-    obs_size = 2
-
-    agent_model = make_agent(agent_model_path, obs_size, patch_size, device)
+    agent_model = make_agent_model(config.agent_model, agent_model_path, device)
 
     default_action = st.radio('Mode to select default action', ['RL', 'Minimum loss'])
 
@@ -320,37 +328,38 @@ def main(config):
             value=1300,
             step=1,
         )
-    elif mode_to_select == 'font index & alphabet index':
-        font_index = st.sidebar.number_input(
-            f'Font index (0~{len(dataset.unique_font) - 1})',
-            0,
-            len(dataset.unique_font) - 1,
-            value=3,
-            step=1,
-        )
-        alphabet_index = st.sidebar.number_input(
-            f'Alphabet index (0~{len(dataset.unique_alphabet) - 1})',
-            0,
-            len(dataset.unique_alphabet) - 1,
-            value=0,
-            step=1,
-        )
-        data_index = dataset.font_alphabet_to_index(font_index, alphabet_index)
-    elif mode_to_select == 'font & alphabet':
-        font = st.sidebar.selectbox('Font', dataset.unique_font, index=3)
-        alphabet = st.sidebar.selectbox('Alphabet', dataset.unique_alphabet)
-        font_index = dataset.unique_font.index(font)
-        alphabet_index = dataset.unique_alphabet.index(alphabet)
-        data_index = dataset.font_alphabet_to_index(font_index, alphabet_index)
+        font = dataset.data_property.iloc[data_index]['font']
+        alphabet = dataset.data_property.iloc[data_index]['alphabet']
     else:
-        assert False
+        if mode_to_select == 'font index & alphabet index':
+            font_index = st.sidebar.number_input(
+                f'Font index (0~{len(dataset.has_uniques["font"]) - 1})',
+                0,
+                len(dataset.has_uniques['font']) - 1,
+                value=4,
+                step=1,
+            )
+            alphabet_index = st.sidebar.number_input(
+                f'Alphabet index (0~{len(dataset.has_uniques["alphabet"]) - 1})',
+                0,
+                len(dataset.has_uniques['alphabet']) - 1,
+                value=0,
+                step=1,
+            )
+            font = dataset.has_uniques['font'][font_index]
+            alphabet = dataset.has_uniques['alphabet'][alphabet_index]
+        elif mode_to_select == 'font & alphabet':
+            font = st.sidebar.selectbox('Font', dataset.has_uniques['font'], index=3)
+            alphabet = st.sidebar.selectbox('Alphabet', dataset.has_uniques['alphabet'])
+        else:
+            assert False
+        df_tmp = dataset.data_property
+        df_tmp = df_tmp[df_tmp['font'] == font]
+        df_tmp = df_tmp[df_tmp['alphabet'] == alphabet]
+        data_index = df_tmp.index.item()
     st.sidebar.write(f'Data index:', data_index)
-    st.sidebar.write(
-        f'Font: `{dataset.index_to_font(data_index)}`, `{dataset.unique_font[dataset.index_to_font(data_index)]}`'
-    )
-    st.sidebar.write(
-        f'Alphabet: `{dataset.index_to_alphabet(data_index)}`, `{dataset.unique_alphabet[dataset.index_to_alphabet(data_index)]}`'
-    )
+    st.sidebar.write(f'Font: `{font}`')
+    st.sidebar.write(f'Alphabet: `{alphabet}`')
 
     _ = env.reset(data_index=data_index)
     image = env.data[0]
@@ -366,7 +375,14 @@ def main(config):
     while not done:
         st.write(f'## step {step}')
         done = one_step(
-            env, agent_model, env.patch_size, image, target, step, default_action
+            env,
+            env_model,
+            agent_model,
+            env.patch_size,
+            image,
+            target,
+            step,
+            default_action,
         )
         step += 1
 
@@ -382,11 +398,8 @@ def main(config):
             **{
                 alphabet: data
                 for alphabet, data in zip(
-                    dataset.unique_alphabet,
-                    torch.cat(env.trajectory['likelihood'], 0)
-                    .softmax(1)
-                    .T.detach()
-                    .cpu(),
+                    dataset.has_uniques['alphabet'],
+                    torch.cat(env.trajectory['output'], 0).softmax(1).T.detach().cpu(),
                 )
             },
         ),
@@ -410,24 +423,26 @@ def main(config):
                     output_format='png',
                 )
 
-    st.sidebar.write('likelihood')
-    likelihood_df = df[dataset.unique_alphabet]
+    st.sidebar.write('output')
+    output_df = df[dataset.has_uniques['alphabet']]
     fig = plt.figure()
     plt.plot(
         range(1, step + 1),
-        likelihood_df[dataset.unique_alphabet[target]],
+        output_df[dataset.has_uniques['alphabet'][target]],
         color='black',
         marker='o',
-        label=dataset.unique_alphabet[target],
+        label=dataset.has_uniques['alphabet'][target],
     )
     top_acc_label = []
-    for _, row in likelihood_df.iterrows():
+    for _, row in output_df.iterrows():
         top_acc_label.extend(row.sort_values(ascending=False)[:2].index)
-    display_label = sorted(set(top_acc_label) - {dataset.unique_alphabet[target]})
+    display_label = sorted(
+        set(top_acc_label) - {dataset.has_uniques['alphabet'][target]}
+    )
     for label in display_label:
         plt.plot(
             range(1, step + 1),
-            likelihood_df[label],
+            output_df[label],
             marker='.',
             label=label,
         )
@@ -471,4 +486,5 @@ def main(config):
 
 
 if __name__ == "__main__":
-    main()
+    with torch.no_grad():
+        main()

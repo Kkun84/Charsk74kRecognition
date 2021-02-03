@@ -1,22 +1,38 @@
 from logging import getLogger
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Union
 
-from typing import Any, Dict, List, Iterable, Union
 import torch
 from torch import Tensor, nn
-from torch.utils.data import Dataset, DataLoader
-
-from src.env import PatchSetsClassificationEnv
-from src.env_model import EnvModel
+from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
+from src.env import PatchSetBuffer, PatchSetsClassificationEnv
+from src.env_model import EnvModel
 
 logger = getLogger(__name__)
 
 
 class EnvModelTrainer:
-    def __init__(self, env_model: EnvModel):
-        self.batch_size = env_model.hparams.batch_size
-        self.optimizer = env_model.configure_optimizers()
+    def __init__(
+        self,
+        env_model: EnvModel,
+        patch_set_buffer: PatchSetBuffer,
+        batch_size: int,
+        epochs: int,
+        optimizer: torch.optim.Optimizer,
+    ):
+        self.env_model = env_model
+        self.patch_set_buffer = patch_set_buffer
+
+        self.epochs = epochs
+
+        self.batch_size = batch_size
+        self.optimizer = optimizer
+
+        self.total_epoch = 0
+        self._train_count = 0
+        self._save_count = 0
 
     @staticmethod
     def collate_fn(batch: Iterable) -> tuple:
@@ -28,44 +44,62 @@ class EnvModelTrainer:
         return x, y
 
     def train(
-        self, env: PatchSetsClassificationEnv, agent, evaluator, step: int, eval_score
+        self,
+        evaluator,
+        step: int,
+        dataloader,
+        epochs: int,
     ):
-
-        model: EnvModel = env.model
-        dataset: Dataset = list(env.make_dataset()) * 10
-
-        dataloader = DataLoader(
-            dataset,
-            self.batch_size,
-            shuffle=True,
-            num_workers=4,
-            drop_last=False,
-            collate_fn=self.collate_fn,
-        )
-
+        model = self.env_model
         model.train()
 
         total_loss = 0
-        print()
-        for batch_idx, data in enumerate(tqdm(dataloader)):
-            loss = model.training_step(data, batch_idx)
+        for epoch in tqdm(range(epochs)):
+            epoch_loss = 0
+            for batch_index, data in enumerate(tqdm(dataloader, leave=False)):
+                loss = model.training_step(data, batch_index)
 
-            self.optimizer.zero_grad()
-            loss.backward()
-            self.optimizer.step()
+                self.optimizer.zero_grad()
+                loss.backward()
+                self.optimizer.step()
 
-            total_loss += loss.item() * len(data[0])
-        total_loss /= len(dataset)
+                epoch_loss += loss.item()
+            epoch_loss /= len(dataloader)
+            logger.info(f'epoch={epoch}, epoch_loss={epoch_loss}')
+            evaluator.tb_writer.add_scalar(
+                'env/epoch_loss', epoch_loss, self.total_epoch + epoch
+            )
+            total_loss += epoch_loss
+        self.total_epoch += self.epochs
 
+        total_loss /= epoch + 1
+        logger.info(f'total_loss={total_loss}')
         evaluator.tb_writer.add_scalar('env/train_loss', total_loss, step)
 
-        logger.info(total_loss)
+        evaluator.tb_writer.add_scalar('env/total_epoch', self.total_epoch, step)
+        evaluator.tb_writer.add_scalar('env/data_num', len(dataloader.dataset), step)
+        evaluator.tb_writer.add_scalar('env/batch_num', len(dataloader), step)
 
         model.eval()
 
-        if step % 100_000 == 0:
-            torch.save(model.state_dict(), f'env_model_{step}.pth')
-        torch.save(model.state_dict(), 'env_model_finish.pth')
+        save_dir = Path('env_model')
+        save_dir.mkdir(exist_ok=True)
+        torch.save(model.state_dict(), str(save_dir / 'env_model_finish.pt'))
+        if step > 100_000 * self._save_count:
+            torch.save(model.state_dict(), str(save_dir / f'env_model_{step}.pth'))
+            self._save_count += 1
+
+        self._train_count += 1
 
     def __call__(self, env, agent, evaluator, step, eval_score):
-        self.train(env, agent, evaluator, step, eval_score)
+        train_dataset = self.patch_set_buffer()
+        train_dataloader = DataLoader(
+            train_dataset,
+            self.batch_size,
+            shuffle=True,
+            num_workers=4,
+            drop_last=True,
+            collate_fn=self.collate_fn,
+        )
+
+        self.train(evaluator, step, train_dataloader, self.epochs)

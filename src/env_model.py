@@ -1,3 +1,5 @@
+from logging import getLogger
+
 from typing import Any, Dict, List, Iterable, Union
 import torch
 from torch import Tensor, nn, optim
@@ -5,25 +7,17 @@ import torch.nn.functional as F
 import pytorch_lightning as pl
 from pytorch_lightning.core.decorators import auto_move_data
 
-import src.set_module as sm
+
+logger = getLogger(__name__)
 
 
 class EnvModel(pl.LightningModule):
     def __init__(
         self,
-        patch_size: int,
-        hidden_n: int,
-        feature_n: int,
         output_n: int,
         pool_mode: str,
-        seed: int = None,
-        batch_size: int = None,
-        num_workers: int = None,
-        max_epochs: int = None,
-        min_epochs: int = None,
-        patience: int = None,
-        optimizer: str = None,
-        lr: float = None,
+        # optimizer: str = None,
+        # lr: float = None,
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -33,16 +27,26 @@ class EnvModel(pl.LightningModule):
         self.accuracy = pl.metrics.Accuracy()
 
         self.f_1 = nn.Sequential(
+            nn.Conv2d(1, 64, kernel_size=3, stride=1, padding=1),
+            nn.MaxPool2d(2),
+            nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=1),
+            nn.MaxPool2d(2),
+            nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=1),
+            nn.MaxPool2d(2),
+            nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=1),
+            nn.AdaptiveAvgPool2d(1),
             nn.Flatten(),
-            nn.Linear(patch_size ** 2, hidden_n),
+            nn.Linear(64, 64),
             nn.ReLU(),
-            nn.Linear(hidden_n, feature_n),
+            nn.Linear(64, 64),
         )
 
-        self.f = nn.Sequential(
-            nn.Linear(feature_n, hidden_n),
+        self.f_2 = nn.Sequential(
+            nn.Linear(64, 64),
             nn.ReLU(),
-            nn.Linear(hidden_n, output_n),
+            nn.Linear(64, 64),
+            nn.ReLU(),
+            nn.Linear(64, output_n),
         )
 
     @auto_move_data
@@ -70,6 +74,7 @@ class EnvModel(pl.LightningModule):
             pool = lambda *args, **kwargs,: torch.max(*args, **kwargs)[0]
         else:
             pool = getattr(torch, self.pool_mode)
+
         if isinstance(feature_set, Tensor):
             x = pool(feature_set, 1, keepdim=keepdim)
         elif isinstance(feature_set, list):
@@ -77,12 +82,12 @@ class EnvModel(pl.LightningModule):
             x = torch.stack(x)
         else:
             assert False
+
         return x
 
     @auto_move_data
     def decode(self, feature: Tensor) -> Tensor:
-        x = feature
-        x = self.f(x)
+        x = self.f_2(feature)
         return x
 
     @auto_move_data
@@ -92,11 +97,11 @@ class EnvModel(pl.LightningModule):
         output = self.decode(features)
         return output
 
-    def configure_optimizers(self) -> optim.Optimizer:
-        optimizer = getattr(optim, self.hparams.optimizer)(
-            self.parameters(), lr=self.hparams.lr
-        )
-        return optimizer
+    # def configure_optimizers(self) -> optim.Optimizer:
+    #     optimizer = getattr(optim, self.hparams.optimizer)(
+    #         self.parameters(), lr=self.hparams.lr
+    #     )
+    #     return optimizer
 
     def _step(self, batch: List[Tensor]) -> Dict[str, Any]:
         x, y = batch
@@ -159,43 +164,52 @@ class EnvModel(pl.LightningModule):
         self.log('test_accuracy', accuracy)
 
 
-if __name__ == '__main__':
-    from torchsummary import summary
+# if __name__ == '__main__':
+#     from torchsummary import summary
 
-    image_size = 10
-    patch_size = 3
-    hidden_n = 256
-    feature_n = 2
-    output_n = 2
-    pool_mode = 'max'
-    patch_num_min = 1
-    patch_num_max = 5
+#     image_size = 100
+#     patch_size = 25
+#     output_n = 2
+#     pool_mode = 'max'
+#     patch_num_min = 1
+#     patch_num_max = 5
 
-    model = EnvModel(
-        patch_size,
-        hidden_n,
-        feature_n,
-        output_n,
-        pool_mode,
-        patch_num_min,
-        patch_num_max,
-    )
-    summary(model)
+#     model = EnvModel(
+#         output_n,
+#         pool_mode,
+#         patch_num_min,
+#         patch_num_max,
+#     )
+#     summary(model)
 
-    batch_size = 5
-    image = (
-        torch.arange(image_size ** 2)
-        .float()
-        .reshape(1, 1, *[image_size] * 2)
-        .expand(batch_size, -1, -1, -1)
-    )
-    x = sm.cutout_patch2d(
-        image,
-        torch.randint(patch_num_min, patch_num_max + 1, [batch_size]),
-        patch_size,
-    )
-    y = model(x)
+#     batch_size = 10
+#     image = (
+#         torch.arange(image_size ** 2)
+#         .float()
+#         .reshape(1, 1, *[image_size] * 2)
+#         .expand(batch_size, -1, -1, -1)
+#     )
 
-    print('image', image.shape)
-    print('x', *[i.shape for i in x], '', sep='\n')
-    print('y', y.shape)
+#     x = sm.cutout_patch2d(
+#         image,
+#         torch.randint(patch_num_max, patch_num_max + 1, [batch_size]),
+#         patch_size,
+#     )
+#     x = torch.stack(x)
+#     y = model(x)
+
+#     print('image', image.shape)
+#     print('x', x.shape)
+#     print('y', y.shape)
+#     print()
+
+#     x = sm.cutout_patch2d(
+#         image,
+#         torch.randint(patch_num_min, patch_num_max + 1, [batch_size]),
+#         patch_size,
+#     )
+#     y = model(x)
+
+#     print('image', image.shape)
+#     print('x', *[i.shape for i in x], '', sep='\n')
+#     print('y', y.shape)
