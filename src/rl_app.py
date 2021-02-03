@@ -262,7 +262,7 @@ def main():
 
         st.write('## Select agent model')
         agent_model_path_pattern = st.text_input(
-            'Agent model path pattern', value='**/outputs/**/*h/model'
+            'Agent model path pattern', value='outputs/**//**/*h/model'
         )
         agent_model_path_pattern = f'{agent_model_path_pattern}.pt'
         path_list = sorted(
@@ -277,7 +277,7 @@ def main():
 
         st.write('## Select env model')
         env_model_path_pattern = st.text_input(
-            'Env model path pattern', value='**/outputs/**/env_model_finish'
+            'Env model path pattern', value='outputs/**//**/env_model_finish'
         )
         env_model_path_pattern = f'{env_model_path_pattern}.pth'
         path_list = sorted(
@@ -292,7 +292,7 @@ def main():
 
         st.write('## Select config file')
         yaml_path_pattern = st.text_input(
-            'Yaml file path pattern', value='**/outputs/**/config'
+            'Yaml file path pattern', value='outputs/**//**/config'
         )
         yaml_path_pattern = f'{yaml_path_pattern}.yaml'
         path_list = sorted(Path(hydra.utils.get_original_cwd()).glob(yaml_path_pattern))
@@ -353,13 +353,15 @@ def main():
             alphabet = st.sidebar.selectbox('Alphabet', dataset.has_uniques['alphabet'])
         else:
             assert False
-        df_tmp = dataset.data_property
-        df_tmp = df_tmp[df_tmp['font'] == font]
-        df_tmp = df_tmp[df_tmp['alphabet'] == alphabet]
-        data_index = df_tmp.index.item()
+        df_property = dataset.data_property
+        df_property = df_property[df_property['font'] == font]
+        df_property = df_property[df_property['alphabet'] == alphabet]
+        data_index = df_property.index.item()
     st.sidebar.write(f'Data index:', data_index)
     st.sidebar.write(f'Font: `{font}`')
     st.sidebar.write(f'Alphabet: `{alphabet}`')
+    st.sidebar.write(f'Category: `{df_property["category"].item()}`')
+    st.sidebar.write(f'Sub category: `{df_property["sub_category"].item()}`')
 
     _ = env.reset(data_index=data_index)
     image = env.data[0]
