@@ -2,7 +2,7 @@ project_name: PatchSetsRL
 experiment_name: Default
 
 debug: False
-gpu: 0
+gpu: null
 
 hparams:
   total_steps_entropy_coef: 0.2
