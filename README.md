@@ -1,4 +1,6 @@
-# PatchSets
+# PatchSetsRL
+
+これはPatchSetsのREADMEです．PatchSetsRLのREADMEではないので注意して下さい．
 
 パッチ集合を入力としてクラス分類をするニューラルネットワークの研究．
 [PyTorch Lightning](https://github.com/PyTorchLightning/pytorch-lightning)と[Hydra](https://github.com/facebookresearch/hydra)を使っています．
