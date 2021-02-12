@@ -289,7 +289,8 @@ def main():
     st.write(f'`{folder_path}`')
 
     device = st.selectbox(
-        'device', [None, 'cpu', *[f'cuda:{i}' for i in range(torch.cuda.device_count())]]
+        'device',
+        [None, 'cpu', *[f'cuda:{i}' for i in range(torch.cuda.device_count())]],
     )
     if device is None:
         return ()
