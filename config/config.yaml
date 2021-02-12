@@ -2,7 +2,7 @@ project_name: PatchSetsRL
 experiment_name: Default
 
 debug: False
-gpu: null
+gpu: ${env:GPU}
 
 hparams:
   total_steps_entropy_coef: 0.2
@@ -27,6 +27,7 @@ env:
 env_model:
   # checkpoint_path: /workspace/src/epoch=1062.ckpt
   input_n: 3
+  feature_n: 64
   output_n: 26
   pool_mode: max
 
@@ -50,7 +51,7 @@ agent:
 experiment:
   steps: 500_000
   eval_interval: ${agent.update_interval}
-  eval_n_episodes: 208
+  eval_n_episodes: 104
   eval_n_steps: ~
   train_max_episode_len: 8
   eval_max_episode_len: 8
