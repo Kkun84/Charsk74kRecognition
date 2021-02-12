@@ -13,4 +13,4 @@ __pycache__/
 /log/
 /outputs/
 /multirun/
-
+post_processing/*/
