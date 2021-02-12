@@ -23,8 +23,6 @@ from src.dataset import AdobeFontDataset
 from src.env import PatchSetsClassificationEnv
 from src.env_model import EnvModel
 
-logger = getLogger(__name__)
-
 
 @st.cache()
 def make_dataset(config_dataset: DictConfig, data_type: List[str]) -> AdobeFontDataset:
