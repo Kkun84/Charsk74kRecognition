@@ -3,6 +3,8 @@ experiment_name: Default
 
 debug: False
 gpu: ${env:GPU}
+# dataset_name: AdobeFontDataset
+dataset_name: Chars74kImageDataset
 
 hparams:
   total_steps_entropy_coef: 0.2
@@ -66,30 +68,46 @@ optim:
     eps: 1e-8
 
 dataset:
+  # train:
+  #   root: '/dataset/AdobeFontCharImages/splitted'
+  #   data_type:
+  #     - 'train_data_0'
+  #     - 'train_data_1'
+  #     - 'train_data_2'
+  #     - 'train_data_3'
+  #   lower: False
+  # valid:
+  #   root: '/dataset/AdobeFontCharImages/splitted'
+  #   data_type:
+  #     - 'train_data_4'
+  #   lower: False
+  # test:
+  #   root: '/dataset/AdobeFontCharImages/splitted'
+  #   data_type:
+  #     - 'test_data'
+  #   lower: False
+
   train:
-    root: '/dataset/AdobeFontCharImages/splitted'
+    root: '/dataset/Chars74k/splitted'
     data_type:
       - 'train_data_0'
       - 'train_data_1'
       - 'train_data_2'
       - 'train_data_3'
-    upper: True
     lower: False
   valid:
-    root: '/dataset/AdobeFontCharImages/splitted'
+    root: '/dataset/Chars74k/splitted'
     data_type:
       - 'train_data_4'
-    upper: True
     lower: False
   test:
-    root: '/dataset/AdobeFontCharImages/splitted'
+    root: '/dataset/Chars74k/splitted'
     data_type:
       - 'test_data'
-    upper: True
     lower: False
 
 hydra:
   run:
-    dir: ./outputs/${experiment_name}/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    dir: ./outputs/${dataset_name}/${experiment_name}/${now:%Y-%m-%d}/${now:%H-%M-%S}
   sweep:
-    dir: ./outputs/${experiment_name}/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    dir: ./outputs/${dataset_name}/${experiment_name}/${now:%Y-%m-%d}/${now:%H-%M-%S}

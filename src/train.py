@@ -10,7 +10,7 @@ from pfrl.experiments import LinearInterpolationHook
 from torchsummary import summary
 from torchvision import transforms
 
-from dataset import AdobeFontDataset
+import dataset
 from src.agent_model import AgentModel
 from src.env import PatchSetBuffer, PatchSetsClassificationEnv
 from src.env_model import EnvModel
@@ -61,10 +61,11 @@ def main(config) -> None:
         train_patch_set_buffer = PatchSetBuffer(**config.patch_set_buffer.train)
         valid_patch_set_buffer = PatchSetBuffer(**config.patch_set_buffer.valid)
 
-        train_dataset = AdobeFontDataset(
+        DatasetClass = getattr(dataset, config.dataset_name)
+        train_dataset = DatasetClass(
             transform=transforms.ToTensor(), **config.dataset.train
         )
-        valid_dataset = AdobeFontDataset(
+        valid_dataset = DatasetClass(
             transform=transforms.ToTensor(), **config.dataset.valid
         )
 
