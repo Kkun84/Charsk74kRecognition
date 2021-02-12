@@ -22,8 +22,10 @@ class PatchSetBuffer:
         self._data: List[List[Tuple[List[Tensor], int]]] = []
 
     def __call__(self) -> List[Tuple[List[Tensor], int]]:
-        self._data.append(self.data[:-1])
-        self.data = self.data[-1:]
+        # self._data.append(self.data[:-1])
+        # self.data = self.data[-1:]
+        self._data.append(self.data)
+        self.data = []
         dataset = sum(self._data, [])
         if len(self._data) >= self.use_n_steps:
             del self._data[0]
@@ -42,6 +44,11 @@ class PatchSetBuffer:
         assert x is not None
         assert y is None
         self.data[-1][0].append(x)
+
+    def append(self, x: List[Tensor], y: int) -> None:
+        assert x is not None
+        assert y is not None
+        self.data.append((x, y))
 
 
 class PatchSetsClassificationEnv(gym.Env):
@@ -266,12 +273,13 @@ class PatchSetsClassificationEnv(gym.Env):
                         [probability[:target], probability[target + 1 :]], 0
                     ).max()
                 ).item()
-            elif probability[target] > self.done_threshold:
-                output_advantage = 1
-            elif probability.max() > self.done_threshold:
-                output_advantage = -1
             else:
-                assert False
+                if probability[target] > self.done_threshold:
+                    output_advantage = 1
+                elif probability.max() > self.done_threshold:
+                    output_advantage = -1
+                else:
+                    assert False
             reward = output_advantage - self.last_output_advantage
 
             self.last_output_advantage = output_advantage

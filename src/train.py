@@ -45,12 +45,16 @@ def main(config) -> None:
 
         pl.seed_everything(0)
 
+        if config.gpu is not None:
+            device = torch.device(f'cuda:{config.gpu}')
+        else:
+            device = torch.device(f'cpu')
+
         if 'checkpoint_path' in config.env_model and False:
             env_model = EnvModel.load_from_checkpoint(config.env_model.checkpoint_path)
         else:
             env_model = EnvModel(**config.env_model)
-        if config.gpu is not None:
-            env_model: EnvModel = env_model.to(f'cuda:{config.gpu}')
+        env_model: EnvModel = env_model.to(device)
         summary(env_model)
         env_model.eval()
 

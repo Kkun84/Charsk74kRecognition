@@ -65,7 +65,7 @@ class EnvModelEvaluator:
         eval_dataloader = DataLoader(
             eval_dataset,
             self.batch_size,
-            shuffle=True,
+            shuffle=False,
             num_workers=4,
             drop_last=False,
             collate_fn=self.collate_fn,

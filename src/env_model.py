@@ -17,11 +17,11 @@ class EnvModel(pl.LightningModule):
         output_n: int,
         pool_mode: str,
         input_n: int = 3,
+        feature_n: int = 64,
         # optimizer: str = None,
         # lr: float = None,
     ):
         super().__init__()
-        self.save_hyperparameters()
 
         self.input_n = input_n
         self.output_n = output_n
@@ -40,11 +40,17 @@ class EnvModel(pl.LightningModule):
             nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=1),
             nn.AdaptiveAvgPool2d(1),
             nn.Flatten(),
-            nn.Linear(64, 64),
+            nn.Linear(64, feature_n),
         )
+        # self.f_1 = nn.Sequential(
+        #     nn.Flatten(),
+        #     nn.Linear(25 ** 2 * self.input_n, 256),
+        #     nn.ReLU(),
+        #     nn.Linear(256, feature_n),
+        # )
 
         self.f_2 = nn.Sequential(
-            nn.Linear(64, 64),
+            nn.Linear(feature_n, 64),
             nn.ReLU(),
             nn.Linear(64, output_n),
         )

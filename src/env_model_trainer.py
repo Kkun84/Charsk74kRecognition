@@ -96,10 +96,10 @@ class EnvModelTrainer:
 
         save_dir = Path('env_model')
         save_dir.mkdir(exist_ok=True)
-        torch.save(model.state_dict(), str(save_dir / 'env_model_finish.pt'))
         if step > 100_000 * self._save_count:
             torch.save(model.state_dict(), str(save_dir / f'env_model_{step}.pth'))
             self._save_count += 1
+        torch.save(model.state_dict(), str(save_dir / 'env_model_finish.pt'))
 
         self._train_count += 1
 
