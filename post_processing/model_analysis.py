@@ -1,20 +1,20 @@
-import numpy as np
-from sklearn.metrics import confusion_matrix
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
+import numpy as np
 import pandas as pd
 import pfrl
 import plotly.express as px
 import plotly.graph_objects as go
 import pytorch_lightning as pl
+import src.dataset
 import streamlit as st
 import torch
 import yaml
 from hydra.utils import DictConfig
+from sklearn.metrics import confusion_matrix
 from src.agent_model import AgentModel
-from src.dataset import AdobeFontDataset
 from src.env import PatchSetsClassificationEnv
 from src.env_model import EnvModel
 from stqdm import stqdm
@@ -25,17 +25,22 @@ from torchvision.transforms.functional import to_pil_image
 from tqdm import tqdm
 
 
-@st.cache(allow_output_mutation=True)
-def make_dataset(config_dataset: DictConfig, data_type: List[str]) -> AdobeFontDataset:
+@st.cache()
+def make_dataset(
+    dataset_class: Callable, config_dataset: DictConfig, data_type: List[str]
+) -> torch.utils.data.Dataset:
     config_dataset_test = config_dataset.test.copy()
     config_dataset_test['data_type'] = data_type
-    dataset = AdobeFontDataset(transform=transforms.ToTensor(), **config_dataset_test)
+    dataset = dataset_class(**config_dataset_test)
     return dataset
 
 
 @st.cache(allow_output_mutation=True)
 def make_env_model(
-    config_env_model: DictConfig, env_model_path: str, dataset: AdobeFontDataset, device
+    config_env_model: DictConfig,
+    env_model_path: str,
+    dataset: torch.utils.data.Dataset,
+    device,
 ) -> EnvModel:
     env_model = EnvModel(**config_env_model)
     env_model.load_state_dict(torch.load(env_model_path, map_location='cpu'))
@@ -111,10 +116,11 @@ def step_index(
 
 
 def eval_dataset(
-    dataset: AdobeFontDataset,
+    dataset: torch.utils.data.Dataset,
     env: PatchSetsClassificationEnv,
     agent: pfrl.agents.PPO,
     max_episode_length: int,
+    target_name: str = None,
 ):
     with agent.eval_mode():
         df = dataset.data_property.copy()
@@ -129,7 +135,7 @@ def eval_dataset(
                 result_list[key].append(value)
         for key, value in result_list.items():
             df[key] = value
-    df['success'] = df['alphabet_id'] == df['estimated']
+    df['success'] = df[target_name + '_id'] == df['estimated']
     return df
 
 
@@ -221,7 +227,14 @@ def main():
         st.sidebar.multiselect('Select data type', data_type, 'test_data')
     )
 
-    dataset = make_dataset(config.dataset, data_type)
+    if 'dataset_name' not in config:
+        config.dataset_name = 'AdobeFontDataset'
+    if config.dataset_name == 'AdobeFontDataset':
+        target_name = 'alphabet'
+    elif config.dataset_name == 'Chars74kImageDataset':
+        target_name = 'label'
+    dataset_class = getattr(src.dataset, config.dataset_name)
+    dataset = make_dataset(dataset_class, config.dataset, data_type)
     dataset_uniques = dataset.uniques
     dataset_has_uniques = dataset.has_uniques
 
@@ -243,7 +256,9 @@ def main():
     if file_name.exists():
         df_evaled = pd.read_csv(file_name, index_col=0)
     else:
-        df_evaled = eval_dataset(dataset, env, agent, max_episode_length)
+        df_evaled = eval_dataset(
+            dataset, env, agent, max_episode_length, target_name=target_name
+        )
         file_name.parent.mkdir(parents=True, exist_ok=True)
         df_evaled.to_csv(file_name)
 
@@ -257,14 +272,14 @@ def main():
     st.write(f'Recognition rate: `{df_evaled["success"].mean()}`')
 
     cm = confusion_matrix(
-        df_evaled['alphabet_id'],
+        df_evaled[target_name + '_id'],
         df_evaled['estimated'],
     )
     fig = px.imshow(
         cm,
         labels={'x': 'Estimated', 'y': 'True', 'color': 'Count'},
-        x=dataset_has_uniques['alphabet'],
-        y=dataset_has_uniques['alphabet'],
+        x=dataset_has_uniques[target_name],
+        y=dataset_has_uniques[target_name],
         title='Confusion matrix',
     )
     fig.update(
