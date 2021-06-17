@@ -1,2 +1,2 @@
 #!/bin/bash
-docker stop PatchSetsRL
+docker stop charsk74k_resnet

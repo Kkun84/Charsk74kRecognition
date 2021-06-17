@@ -1,2 +1,2 @@
 #!/bin/bash
-docker attach PatchSetsRL
+docker attach charsk74k_resnet

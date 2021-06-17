@@ -1,2 +1,2 @@
 #!/bin/bash
-docker exec -it PatchSetsRL ${@-fish}
+docker exec -it charsk74k_resnet ${@-fish}

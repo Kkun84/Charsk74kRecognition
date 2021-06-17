@@ -13,9 +13,9 @@ docker run \
     -it \
     --gpus=all \
     --ipc=host \
-    --name=PatchSetsRL \
+    --name=charsk74k_resnet \
     --env-file=.env \
     --volume=$PWD:/workspace \
     --volume=$DATASET:/dataset \
-    patch_sets_rl:latest \
+    charsk74k_resnet:latest \
     ${@-fish}
