@@ -13,7 +13,7 @@ docker run \
     -it \
     --gpus=all \
     --ipc=host \
-    --name=charsk74k_resnet \
+    --name=charsk74k_recognition \
     --env-file=.env \
     --volume=$PWD:/workspace \
     --volume=$DATASET:/dataset \
