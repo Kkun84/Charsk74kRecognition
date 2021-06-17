@@ -1,31 +1,44 @@
-# FROM pytorch/pytorch:1.7.0-cuda11.0-cudnn8-runtime
-FROM pytorch/pytorch:1.6.0-cuda10.1-cudnn7-runtime
+# FROM pytorch/pytorch:1.9.0-cuda10.2-cudnn7-runtime
+FROM nvidia/cuda:11.0.3-devel-ubuntu20.04
 
 # Timezone setting
-RUN apt-get update && apt-get install -y --no-install-recommends tzdata
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends tzdata
 
 # Install something
-RUN apt-get update && apt-get install -y --no-install-recommends software-properties-common
-RUN apt-add-repository -y ppa:fish-shell/release-3
-RUN apt-get update && apt-get install -y --no-install-recommends fish
-
-RUN apt-get update && apt-get install -y --no-install-recommends nano git sudo curl
+RUN apt-get update && apt-get install -y --no-install-recommends bash curl fish git nano sudo
 
 # OpenCV
 RUN apt-get update && apt-get install -y --no-install-recommends libopencv-dev
 
-# Install Python library
-COPY requirements.txt /
-RUN pip install -r /requirements.txt
+# # Install Python
+ENV PYTHON_VERSION 3.9
+RUN apt-get update && apt-get install -y --no-install-recommends python${PYTHON_VERSION}
 
+# Add User & Group
 ARG UID
-ARG GID
 ARG USER
 ARG PASSWORD
-RUN groupadd -g ${GID} ${USER}_group
+RUN groupadd -g 1000 ${USER}_group
 RUN useradd -m --uid=${UID} --gid=${USER}_group --groups=sudo ${USER}
 RUN echo ${USER}:${PASSWORD} | chpasswd
 RUN echo 'root:root' | chpasswd
+
+ENV PATH ${PATH}:/home/${USER}/.local/bin
+
+# Change working directory
+ENV WORK_DIR /workspace
+RUN mkdir ${WORK_DIR}
+RUN chown ${USER}:${USER}_group ${WORK_DIR}
+WORKDIR ${WORK_DIR}
+
+# Change User
 USER ${USER}
 
-ENV PATH $PATH:/home/${USER}/.local/bin
+# Install pip
+RUN curl --silent https://bootstrap.pypa.io/get-pip.py -o get-pip.py
+RUN python${PYTHON_VERSION} get-pip.py
+RUN rm get-pip.py
+
+# Install Python library
+COPY requirements.txt /
+RUN pip install -r /requirements.txt

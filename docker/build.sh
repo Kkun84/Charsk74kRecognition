@@ -3,6 +3,6 @@ docker build \
     --pull \
     --rm \
     -f "Dockerfile" \
-    --build-arg UID=$(id -u) --build-arg GID=$(id -g) --build-arg USER=hoge --build-arg PASSWORD=fuga \
+    --build-arg UID=$(id -u) --build-arg USER=hoge --build-arg PASSWORD=fuga \
     -t \
     charsk74k_recognition:latest "."
