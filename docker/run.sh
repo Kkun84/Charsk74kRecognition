@@ -17,5 +17,5 @@ docker run \
     --env-file=.env \
     --volume=$PWD:/workspace \
     --volume=$DATASET:/dataset \
-    charsk74k_resnet:latest \
+    charsk74k_recognition:latest \
     ${@-fish}
