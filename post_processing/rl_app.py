@@ -1,40 +1,46 @@
 import os
-from logging import getLogger
 from pathlib import Path
-from typing import Dict, List
+from typing import Callable, Dict, List
 
 import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
 import more_itertools
 import pandas as pd
 import pfrl
 import pytorch_lightning as pl
+import src.dataset
 import streamlit as st
 import torch
 import torch.nn.functional as F
 import yaml
 from hydra.utils import DictConfig
-from torch import Tensor
-from torchsummary import summary
-from torchvision import transforms
-from torchvision.transforms.functional import to_pil_image
-
 from src.agent_model import AgentModel
-from src.dataset import AdobeFontDataset
 from src.env import PatchSetsClassificationEnv
 from src.env_model import EnvModel
+from torch import Tensor
+from torchsummary import summary
+from torchvision.transforms.functional import to_pil_image
+import cv2
+import numpy as np
+from PIL import ImageFilter
 
 
 @st.cache()
-def make_dataset(config_dataset: DictConfig, data_type: List[str]) -> AdobeFontDataset:
+def make_dataset(
+    dataset_class: Callable, config_dataset: DictConfig, data_type: List[str]
+) -> torch.utils.data.Dataset:
     config_dataset_test = config_dataset.test.copy()
     config_dataset_test['data_type'] = data_type
-    dataset = AdobeFontDataset(transform=transforms.ToTensor(), **config_dataset_test)
+    dataset = dataset_class(**config_dataset_test)
     return dataset
 
 
 @st.cache(allow_output_mutation=True)
 def make_env_model(
-    config_env_model: DictConfig, env_model_path: str, dataset: AdobeFontDataset, device
+    config_env_model: DictConfig,
+    env_model_path: str,
+    dataset: torch.utils.data.Dataset,
+    device,
 ) -> EnvModel:
     env_model = EnvModel(**config_env_model)
     env_model.load_state_dict(torch.load(env_model_path, map_location='cpu'))
@@ -186,13 +192,13 @@ def one_step(
 
         st.write('State')
         fig = plt.figure()
-        plt.imshow(obs[0].cpu().detach().numpy())
+        plt.imshow(obs[0:-1].permute(1, 2, 0).cpu().detach().numpy())
         plt.colorbar()
         st.pyplot(fig, True)
         plt.close()
 
         fig = plt.figure()
-        plt.imshow(obs[1].cpu().detach().numpy(), cmap='tab10', vmin=0, vmax=10)
+        plt.imshow(obs[-1].cpu().detach().numpy(), cmap='tab10', vmin=0, vmax=10)
         plt.colorbar()
         st.pyplot(fig, True)
         plt.close()
@@ -256,9 +262,9 @@ def one_step(
 
         _, _, done, _ = env.step(action)
         patch = env.trajectory['patch'][-1]
-        patch = patch[0:1]
+        patch = patch[:-2]
         assert patch.dim() == 3
-        assert patch.shape[0] == 1
+        assert (patch.shape[0] == 1) or (patch.shape[0] == 3)
         st.image(
             to_pil_image(patch.cpu()),
             use_column_width=True,
@@ -278,7 +284,14 @@ def main():
 
     st.write('# RL test app')
 
-    folder = Path(st.text_input('Select folder', value='outputs/**/*/'), 'train.log')
+    # folder = Path(st.text_input('Select folder', value='outputs/**/*/'), 'train.log')
+    folder = Path(
+        st.text_input(
+            'Select folder',
+            value='outputs/AdobeFontDataset/baseline/gamma00/2021-02-06/02-18-34',
+        ),
+        'train.log',
+    )
     path_list = sorted(Path().glob(str(folder)), key=os.path.getmtime)
     path_list = [i.parent for i in path_list]
     folder_path = st.selectbox(
@@ -352,61 +365,108 @@ def main():
             data_type.extend(i.data_type)
     data_type = st.sidebar.multiselect('Select data type', data_type, 'test_data')
 
-    dataset = make_dataset(config.dataset, data_type)
+    dataset_dict = {
+        name: cls for name, cls in src.dataset.__dict__.items() if isinstance(cls, type)
+    }
+
+    if 'dataset_name' not in config:
+        config.dataset_name = 'AdobeFontDataset'
+    if config.dataset_name == 'AdobeFontDataset':
+        target_name = 'alphabet'
+    elif config.dataset_name == 'Chars74kImageDataset':
+        target_name = 'label'
+    dataset_class = getattr(src.dataset, config.dataset_name)
+    dataset = make_dataset(dataset_class, config.dataset, data_type)
 
     default_action = st.radio('Mode to select default action', ['RL', 'Minimum loss'])
 
-    mode_to_select = st.sidebar.radio(
-        'Mode to select', ['Number input', 'Select box'], 0
-    )
-    if mode_to_select == 'Number input':
-        font_index = st.sidebar.number_input(
-            f'Font index (0~{len(dataset.has_uniques["font"]) - 1})',
-            0,
-            len(dataset.has_uniques['font']) - 1,
-            value=1,
-            step=1,
-        )
-        alphabet_index = st.sidebar.number_input(
-            f'Alphabet index (0~{len(dataset.has_uniques["alphabet"]) - 1})',
-            0,
-            len(dataset.has_uniques['alphabet']) - 1,
-            value=0,
-            step=1,
-        )
-        font = dataset.has_uniques['font'][font_index]
-        alphabet = dataset.has_uniques['alphabet'][alphabet_index]
-    elif mode_to_select == 'Select box':
-        font = st.sidebar.selectbox('Font', dataset.has_uniques['font'], index=1)
-        alphabet = st.sidebar.selectbox('Alphabet', dataset.has_uniques['alphabet'])
-    else:
-        assert False
-    df_property = dataset.data_property.reset_index()
-    df_property = df_property[df_property['font'] == font]
-    df_property = df_property[df_property['alphabet'] == alphabet]
-    data_index = df_property.index.item()
-    st.sidebar.write(f'Data index:', data_index, f'(id={df_property["index"].item()})')
-    st.sidebar.write(f'Font: `{font}` (id={df_property["font_id"].item()})')
-    st.sidebar.write(f'Alphabet: `{alphabet}` (id={df_property["alphabet_id"].item()})')
-    st.sidebar.write(
-        f'Category: `{df_property["category"].item()}` (id={df_property["category_id"].item()})'
-    )
-    st.sidebar.write(
-        f'Sub category: `{df_property["sub_category"].item()}` (id={df_property["sub_category_id"].item()})'
-    )
+    with st.sidebar:
+        if config.dataset_name == 'AdobeFontDataset':
+            mode_to_select = st.radio(
+                'Mode to select', ['Number input', 'Select box'], 0
+            )
+            if mode_to_select == 'Number input':
+                font_index = st.number_input(
+                    f'Font index (0~{len(dataset.has_uniques["font"]) - 1})',
+                    0,
+                    len(dataset.has_uniques['font']) - 1,
+                    value=6,
+                    step=1,
+                )
+                alphabet_index = st.number_input(
+                    f'Alphabet index (0~{len(dataset.has_uniques["alphabet"]) - 1})',
+                    0,
+                    len(dataset.has_uniques['alphabet']) - 1,
+                    value=0,
+                    step=1,
+                )
+                font = dataset.has_uniques['font'][font_index]
+                alphabet = dataset.has_uniques['alphabet'][alphabet_index]
+            elif mode_to_select == 'Select box':
+                font = st.selectbox('Font', dataset.has_uniques['font'], index=6)
+                alphabet = st.selectbox('Alphabet', dataset.has_uniques['alphabet'])
+            else:
+                assert False
+            df_property = dataset.data_property.reset_index()
+            df_property = df_property[df_property['font'] == font]
+            df_property = df_property[df_property['alphabet'] == alphabet]
+            data_index = df_property.index.item()
+            st.write(f'Data index:', data_index, f'(id={df_property["index"].item()})')
+            st.write(f'Font: `{font}` (id={df_property["font_id"].item()})')
+            st.write(f'Alphabet: `{alphabet}` (id={df_property["alphabet_id"].item()})')
+            st.write(
+                f'Category: `{df_property["category"].item()}` (id={df_property["category_id"].item()})'
+            )
+            st.write(
+                f'Sub category: `{df_property["sub_category"].item()}` (id={df_property["sub_category_id"].item()})'
+            )
+
+        elif config.dataset_name == 'Chars74kImageDataset':
+            label_index = st.number_input(
+                f'Label index (0~{len(dataset.has_uniques["label"]) - 1})',
+                0,
+                len(dataset.has_uniques['label']) - 1,
+                value=0,
+                step=1,
+            )
+            label_id = dataset.uniques['label'].index(
+                dataset.has_uniques['label'][label_index]
+            )
+            label_data_index = st.number_input(
+                f'Data index (0~{(dataset.data_property["label_id"] == label_id).sum() - 1})',
+                0,
+                (dataset.data_property['label_id'] == label_id).sum() - 1,
+                value=0,
+                step=1,
+            )
+
+            df_property = dataset.data_property.reset_index()
+            df_property = df_property[df_property['label_id'] == label_id]
+            df_property = df_property.iloc[label_data_index]
+            data_index = df_property.name.item()
+            st.write(f'Data index:', data_index, f'(id={df_property["index"].item()})')
+            st.write(
+                f'Label: `{df_property["label"]}` (id={df_property["label_id"].item()})'
+            )
+            st.write(
+                f'Quality: `{df_property["quality"]}` (id={df_property["quality_id"].item()})'
+            )
+            st.write(f'Name: `{df_property["name"]}`')
+        else:
+            assert False
 
     env_model = make_env_model(config.env_model, env_model_path, dataset, device)
     env = PatchSetsClassificationEnv(dataset=dataset, env_model=env_model, **config.env)
+
     agent_model = make_agent_model(config.agent_model, agent_model_path, device)
 
     _ = env.reset(data_index=data_index)
     image = env.data[0]
     target = env.data[1]
 
-    st.sidebar.write('# Original data')
-    st.sidebar.image(
-        to_pil_image(image.cpu()), use_column_width=True, output_format='png'
-    )
+    with st.sidebar:
+        st.write('# Original data')
+        st.image(to_pil_image(image.cpu()), use_column_width=True, output_format='png')
 
     step = 0
     done = False
@@ -424,105 +484,169 @@ def main():
         )
         step += 1
 
-    st.sidebar.write('# History')
+    with st.sidebar:
+        st.write('# History')
 
-    df = pd.DataFrame(
-        dict(
-            action=env.trajectory['action'],
-            x=[i % image.shape[2] for i in env.trajectory['action']],
-            y=[i // image.shape[2] for i in env.trajectory['action']],
-            loss=env.trajectory['loss'],
-            reward=env.trajectory['reward'],
-            **{
-                alphabet: data
-                for alphabet, data in zip(
-                    dataset.has_uniques['alphabet'],
-                    torch.cat(env.trajectory['output'], 0).softmax(1).T.detach().cpu(),
-                )
-            },
-        ),
-    )
+        df = pd.DataFrame(
+            dict(
+                action=env.trajectory['action'],
+                x=[i % image.shape[2] for i in env.trajectory['action']],
+                y=[i // image.shape[2] for i in env.trajectory['action']],
+                loss=env.trajectory['loss'],
+                reward=env.trajectory['reward'],
+                **{
+                    target: data
+                    for target, data in zip(
+                        dataset.has_uniques[target_name],
+                        torch.cat(env.trajectory['output'], 0)
+                        .softmax(1)
+                        .T.detach()
+                        .cpu(),
+                    )
+                },
+            ),
+        )
 
-    st.sidebar.write('state[1]')
-    obs = env.trajectory['observation'][-1]
-    fig = plt.figure()
-    plt.imshow(obs[1].cpu().detach().numpy(), cmap='tab10', vmin=0, vmax=10)
-    plt.colorbar()
-    st.sidebar.pyplot(fig, True)
-    plt.close()
+        st.write('Cropped area')
 
-    st.sidebar.write('patch')
-    for i in more_itertools.chunked(env.trajectory['patch'], 4):
-        for col, patch in zip(st.sidebar.beta_columns(4), list(i) + [None] * 3):
-            if patch is not None:
-                patch = patch[0:1]
-                assert patch.dim() == 3
-                assert patch.shape[0] == 1
-                col.image(
-                    to_pil_image(patch.cpu()),
-                    use_column_width=True,
-                    output_format='png',
-                )
+        obs = env.trajectory['observation'][-1]
+        fig = plt.figure()
+        plt.imshow(obs[-1].cpu().detach().numpy(), cmap='tab10', vmin=0, vmax=10)
+        plt.colorbar()
+        st.pyplot(fig, True)
+        plt.close()
 
-    st.sidebar.write('output')
-    output_df = df[dataset.has_uniques['alphabet']]
-    fig = plt.figure()
-    plt.plot(
-        range(1, step + 1),
-        output_df[dataset.has_uniques['alphabet'][target]],
-        color='black',
-        marker='o',
-        label=dataset.has_uniques['alphabet'][target],
-    )
-    top_acc_label = []
-    for _, row in output_df.iterrows():
-        top_acc_label.extend(row.sort_values(ascending=False)[:2].index)
-    display_label = sorted(
-        set(top_acc_label) - {dataset.has_uniques['alphabet'][target]}
-    )
-    for label in display_label:
+        # fig = plt.figure()
+        # plt.imshow((obs[-1] > 0).cpu().detach().numpy(), cmap='tab10', vmin=0, vmax=10)
+        # plt.colorbar()
+        # st.pyplot(fig, True)
+        # plt.close()
+
+        # st.image(
+        #     to_pil_image(
+        #         # torch.stack([*image] * 3 + [((obs[-1] > 0) + 1.0) / 2.0], 0).cpu()
+        #         torch.stack([*image, ((obs[-1] > 0) + 1.0) / 2.0], 0).cpu()
+        #     ),
+        #     use_column_width=True,
+        #     output_format='png',
+        # )
+
+        # patched_area = obs[-1].cpu().detach().clone().numpy()
+        # kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+        # patched_area_frame = torch.from_numpy(
+        #     cv2.dilate(patched_area, kernel) != patched_area
+        # )
+        # patched_area = obs[-1]
+        # patched_area_frame = (
+        #     F.max_pool2d(patched_area[None], kernel_size=3, stride=1, padding=1)[0]
+        #     != patched_area
+        # )
+        # patched_area_frame |= (
+        #     -F.max_pool2d(-patched_area[None], kernel_size=3, stride=1, padding=1)[0]
+        #     != patched_area
+        # )
+        # patched_area_frame = obs[-1].cpu().detach().clone().numpy()
+        patched_area_frame = np.zeros(obs[-1].shape)
+        for action_x, action_y in zip(
+            env.trajectory['action_x'], env.trajectory['action_y']
+        ):
+            top = action_y
+            bottom = action_y + env.patch_size['y']
+            left = action_x
+            right = action_x + env.patch_size['x']
+            patched_area_frame = cv2.rectangle(
+                patched_area_frame, (left, top), (right, bottom), (1,), 1
+            )
+        patched_area_frame = torch.from_numpy(patched_area_frame.astype(bool))
+
+        # tmp = (torch.cat([image] * 3, 0) if len(image) == 1 else image).cpu().clone()
+        # for i, value in enumerate([1, 0, 0]):
+        #     tmp[i, patched_area_frame] = value
+        # st.image(to_pil_image(tmp), use_column_width=True, output_format='png')
+
+        tmp = (torch.cat([image] * 3, 0) if len(image) == 1 else image).cpu().clone()
+        tmp = torch.stack([*tmp, ((obs[-1] > 0) + 1.0) / 2.0], 0).cpu().clone()
+        for i, value in enumerate([1, 0, 0, 1]):
+            tmp[i, patched_area_frame] = value
+        st.image(to_pil_image(tmp), use_column_width=True, output_format='png')
+
+        st.write('patch')
+        for i in more_itertools.chunked(env.trajectory['patch'], 4):
+            for col, patch in zip(st.beta_columns(4), list(i) + [None] * 3):
+                if patch is not None:
+                    patch = patch[:-2]
+                    assert patch.dim() == 3
+                    assert (patch.shape[0] == 1) or (patch.shape[0] == 3)
+                    col.image(
+                        to_pil_image(patch.cpu()),
+                        use_column_width=True,
+                        output_format='png',
+                    )
+
+        st.write('output')
+        output_df = df[dataset.has_uniques[target_name]]
+        fig = plt.figure()
         plt.plot(
             range(1, step + 1),
-            output_df[label],
-            marker='.',
-            label=label,
+            output_df[dataset.has_uniques[target_name][target]],
+            color='black',
+            marker='o',
+            label=dataset.has_uniques[target_name][target],
         )
-    plt.ylim([0, 1])
-    plt.legend()
-    st.sidebar.pyplot(fig, True)
+        plt.gca().get_xaxis().set_major_locator(ticker.MaxNLocator(integer=True))
+        top_acc_label = []
+        for _, row in output_df.iterrows():
+            top_acc_label.extend(row.sort_values(ascending=False)[:2].index)
+        display_label = sorted(
+            set(top_acc_label) - {dataset.has_uniques[target_name][target]}
+        )
+        for label in display_label:
+            plt.plot(
+                range(1, step + 1),
+                output_df[label],
+                marker='.',
+                label=label,
+            )
+        plt.ylim([0, 1])
+        plt.legend()
+        st.pyplot(fig, True)
 
-    st.sidebar.write('loss')
-    fig = plt.figure()
-    plt.plot(range(1, step + 1), env.trajectory['loss'], marker='o', label='loss')
-    plt.hlines(
-        [
-            F.cross_entropy(
-                torch.zeros([1, 26]),
-                torch.tensor([target], dtype=torch.long),
-            ).item()
-        ],
-        1,
-        step,
-        color='gray',
-        linestyles='--',
-    )
-    plt.ylim([0, max(plt.ylim())])
-    st.sidebar.pyplot(fig, True)
+        st.write('loss')
+        fig = plt.figure()
+        plt.plot(range(1, step + 1), env.trajectory['loss'], marker='o', label='loss')
+        plt.gca().get_xaxis().set_major_locator(ticker.MaxNLocator(integer=True))
+        plt.hlines(
+            [
+                F.cross_entropy(
+                    torch.zeros([1, 26]),
+                    torch.tensor([target], dtype=torch.long),
+                ).item()
+            ],
+            1,
+            step,
+            color='gray',
+            linestyles='--',
+        )
+        plt.ylim([0, max(plt.ylim())])
+        st.pyplot(fig, True)
 
-    st.sidebar.write('reward')
-    fig = plt.figure()
-    plt.plot(range(1, step + 1), env.trajectory['reward'], marker='o', label='reward')
-    plt.hlines(
-        [0],
-        1,
-        step,
-        color='gray',
-        linestyles='--',
-    )
-    st.sidebar.pyplot(fig, True)
+        st.write('reward')
+        fig = plt.figure()
+        plt.plot(
+            range(1, step + 1), env.trajectory['reward'], marker='o', label='reward'
+        )
+        plt.gca().get_xaxis().set_major_locator(ticker.MaxNLocator(integer=True))
+        plt.hlines(
+            [0],
+            1,
+            step,
+            color='gray',
+            linestyles='--',
+        )
+        st.pyplot(fig, True)
 
-    st.sidebar.write('data')
-    st.sidebar.dataframe(df)
+        st.write('data')
+        st.dataframe(df)
     return
 
 

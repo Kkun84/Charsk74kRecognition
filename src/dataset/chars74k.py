@@ -1,15 +1,13 @@
 from logging import getLogger
-from torch.functional import Tensor
-from tqdm import tqdm
 from pathlib import Path
-import torch
-from PIL import Image
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Union
+
 import pandas as pd
-from typing import Dict, Iterable, Union, Optional, Tuple, Any, Callable, List
+import torch
 import yaml
-
-
-logger = getLogger(__name__)
+from PIL import Image
+from torchvision import transforms
+from tqdm import tqdm
 
 
 class Chars74kImageDataset(torch.utils.data.Dataset):
@@ -17,7 +15,10 @@ class Chars74kImageDataset(torch.utils.data.Dataset):
         self,
         root: str,
         data_type: Union[str, Iterable[str]],
-        transform: Optional[Callable[[Image.Image], Any]] = None,
+        # transform: Optional[Callable[[Image.Image], Any]] = None,
+        transform: Optional[Callable[[Image.Image], Any]] = transforms.Compose(
+            [transforms.Resize([100, 100]), transforms.ToTensor()]
+        ),
         target_transform: Optional[Callable[[Dict[str, Union[str, int]]], Any]] = (
             lambda y: y['label_id']
         ),

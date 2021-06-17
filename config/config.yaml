@@ -3,8 +3,8 @@ experiment_name: Default
 
 debug: False
 gpu: ${env:GPU}
-# dataset_name: AdobeFontDataset
-dataset_name: Chars74kImageDataset
+dataset_name: AdobeFontDataset
+# dataset_name: Chars74kImageDataset
 
 hparams:
   total_steps_entropy_coef: 0.2
@@ -68,27 +68,8 @@ optim:
     eps: 1e-8
 
 dataset:
-  # train:
-  #   root: '/dataset/AdobeFontCharImages/splitted'
-  #   data_type:
-  #     - 'train_data_0'
-  #     - 'train_data_1'
-  #     - 'train_data_2'
-  #     - 'train_data_3'
-  #   lower: False
-  # valid:
-  #   root: '/dataset/AdobeFontCharImages/splitted'
-  #   data_type:
-  #     - 'train_data_4'
-  #   lower: False
-  # test:
-  #   root: '/dataset/AdobeFontCharImages/splitted'
-  #   data_type:
-  #     - 'test_data'
-  #   lower: False
-
   train:
-    root: '/dataset/Chars74k/splitted'
+    root: '/dataset/AdobeFontCharImages/splitted'
     data_type:
       - 'train_data_0'
       - 'train_data_1'
@@ -96,15 +77,40 @@ dataset:
       - 'train_data_3'
     lower: False
   valid:
-    root: '/dataset/Chars74k/splitted'
+    root: '/dataset/AdobeFontCharImages/splitted'
     data_type:
       - 'train_data_4'
     lower: False
   test:
-    root: '/dataset/Chars74k/splitted'
+    root: '/dataset/AdobeFontCharImages/splitted'
     data_type:
       - 'test_data'
     lower: False
+
+  # train:
+  #   root: '/dataset/Chars74k/splitted'
+  #   data_type:
+  #     - 'train_data_0'
+  #     - 'train_data_1'
+  #     - 'train_data_2'
+  #     - 'train_data_3'
+  #   number: True
+  #   upper: False
+  #   lower: False
+  # valid:
+  #   root: '/dataset/Chars74k/splitted'
+  #   data_type:
+  #     - 'train_data_4'
+  #   number: True
+  #   upper: False
+  #   lower: False
+  # test:
+  #   root: '/dataset/Chars74k/splitted'
+  #   data_type:
+  #     - 'test_data'
+  #   number: True
+  #   upper: False
+  #   lower: False
 
 hydra:
   run:

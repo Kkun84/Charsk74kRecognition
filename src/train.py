@@ -62,12 +62,8 @@ def main(config) -> None:
         valid_patch_set_buffer = PatchSetBuffer(**config.patch_set_buffer.valid)
 
         DatasetClass = getattr(dataset, config.dataset_name)
-        train_dataset = DatasetClass(
-            transform=transforms.ToTensor(), **config.dataset.train
-        )
-        valid_dataset = DatasetClass(
-            transform=transforms.ToTensor(), **config.dataset.valid
-        )
+        train_dataset = DatasetClass(**config.dataset.train)
+        valid_dataset = DatasetClass(**config.dataset.valid)
 
         train_env = PatchSetsClassificationEnv(
             dataset=train_dataset,

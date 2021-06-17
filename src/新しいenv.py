@@ -1,6 +1,6 @@
 import random
 from logging import getLogger
-from typing import Dict, List, Optional, Tuple, Type
+from typing import Dict, List, Optional, Tuple
 
 import gym
 import pytorch_lightning as pl
@@ -10,6 +10,7 @@ from torch import Tensor
 from torch.utils.data import Dataset
 
 from src.env_model import EnvModel
+
 
 logger = getLogger(__name__)
 
@@ -22,8 +23,6 @@ class PatchSetBuffer:
         self._data: List[List[Tuple[List[Tensor], int]]] = []
 
     def __call__(self) -> List[Tuple[List[Tensor], int]]:
-        # self._data.append(self.data[:-1])
-        # self.data = self.data[-1:]
         self._data.append(self.data)
         self.data = []
         dataset = sum(self._data, [])
@@ -34,16 +33,6 @@ class PatchSetBuffer:
     def __len__(self) -> int:
         length = len(sum(self._data, [])) + len(self.data[:-1])
         return length
-
-    def reset(self, x: Type[None], y: int) -> None:
-        assert x is None
-        assert y is not None
-        self.data.append(([], y))
-
-    def step(self, x: Tensor, y: Type[None]) -> None:
-        assert x is not None
-        assert y is None
-        self.data[-1][0].append(x)
 
     def append(self, x: List[Tensor], y: int) -> None:
         assert x is not None
@@ -58,19 +47,19 @@ class PatchSetsClassificationEnv(gym.Env):
         env_model: EnvModel,
         patch_size: Dict[str, int],
         patch_type: str = 'coord',
-        done_threshold: float = 0,
         patch_set_buffer: Optional[PatchSetBuffer] = None,
     ):
-        assert {'x', 'y'} == set(patch_size.keys())
+        assert {'x', 'y'} == set(patch_size)
 
-        self.action_space = gym.spaces.Discrete((100 - 25 + 1) ** 2)
+        self.action_space = gym.spaces.Discrete(
+            (100 - patch_size['x'] + 1) * (100 - patch_size['y'] + 1) + 1
+        )
         self.observation_space = gym.spaces.Box(low=0, high=1, shape=[2, 100, 100])
 
         self.dataset = dataset
         self.env_model = env_model
         self.patch_size = patch_size
         self.patch_type = patch_type
-        self.done_threshold = done_threshold
 
         self._random_index = []
 
@@ -154,14 +143,6 @@ class PatchSetsClassificationEnv(gym.Env):
         observation = torch.cat([image, mask])
         return observation
 
-    @staticmethod
-    def convert_action(image_height: int, image_width: int, patch_size: Dict[str, int], action: int) -> Tuple[int, int]:
-        action_x = action % (image_width - patch_size['x'] + 1)
-        action_y = action // (image_width - patch_size['x'] + 1)
-        assert 0 <= action_x < image_width - patch_size['x'] + 1
-        assert 0 <= action_y < image_height - patch_size['y'] + 1
-        return action_x, action_y
-
     def reset(self, data_index: int = None) -> Tensor:
         device = self.env_model.device
         with torch.no_grad():
@@ -170,8 +151,6 @@ class PatchSetsClassificationEnv(gym.Env):
                 for i in [
                     'observation',
                     'action',
-                    'action_x',
-                    'action_y',
                     'patch',
                     'feature_set',
                     'output',
@@ -201,9 +180,6 @@ class PatchSetsClassificationEnv(gym.Env):
             self.step_count = 0
             self.trajectory['observation'].append(observation)
 
-            if self.patch_set_buffer is not None:
-                self.patch_set_buffer.reset(x=None, y=data[1])
-
             return observation
 
     def step(self, action: int) -> tuple:
@@ -212,89 +188,95 @@ class PatchSetsClassificationEnv(gym.Env):
             image, target = self.data
 
             self.trajectory['action'].append(action)
-            action_x, action_y = PatchSetsClassificationEnv.convert_action(image.shape[1], image.shape[2], self.patch_size, action)
-            self.trajectory['action_x'].append(action_x)
-            self.trajectory['action_y'].append(action_y)
 
-            if self.patch_type == 'patch':
-                patch = PatchSetsClassificationEnv.make_patch(
-                    image, action_x, action_y, self.patch_size
-                )
-            elif self.patch_type == 'coord':
-                patch = PatchSetsClassificationEnv.make_coord_patch(
-                    image, action_x, action_y, self.patch_size
-                )
-            elif self.patch_type == 'mask':
-                patch = PatchSetsClassificationEnv.make_mask_patch(
-                    image, action_x, action_y, self.patch_size
-                )
-            else:
-                assert False, self.patch_type
-            self.trajectory['patch'].append(patch.detach().clone())
-
-            if self.patch_set_buffer is not None:
-                self.patch_set_buffer.step(patch.detach().cpu().clone(), None)
-
-            feature_set = self.env_model.encode(patch[None, None])
-            if self.step_count > 0:
-                feature_set = torch.cat(
-                    [
-                        feature_set,
-                        self.trajectory['feature_set'][-1],
-                    ],
-                    1,
-                )
-
-            self.trajectory['feature_set'].append(feature_set.detach().clone())
-
-            feature = self.env_model.pool(feature_set)
-
-            output = self.env_model.decode(feature)
-            self.trajectory['output'].append(output.detach().clone())
-
-            image = self.data[0]
-            self.patched_area = (
-                self.patched_area
-                + self.make_patched_area(
-                    image.shape[1],
-                    image.shape[2],
-                    action_x,
-                    action_y,
-                    self.patch_size,
-                    device,
-                ).float()
+            done = action == (
+                (image.shape[2] - self.patch_size['x'] + 1)
+                * (image.shape[1] - self.patch_size['y'] + 1)
             )
-            observation = self.make_observation(image, self.patched_area)
-            self.trajectory['observation'].append(observation)
-
-            loss = F.cross_entropy(
-                output,
-                torch.tensor([target], dtype=torch.long, device=device),
-            ).item()
-            self.trajectory['loss'].append(loss)
-
-            probability = output.softmax(1)[0]
-            # done = probability[target] > self.done_threshold
-            done = probability.max() > self.done_threshold
 
             if not done:
+                action_x = action % (image.shape[2] - self.patch_size['x'] + 1)
+                action_y = action // (image.shape[2] - self.patch_size['x'] + 1)
+
+                if self.patch_type == 'patch':
+                    patch = PatchSetsClassificationEnv.make_patch(
+                        image, action_x, action_y, self.patch_size
+                    )
+                elif self.patch_type == 'coord':
+                    patch = PatchSetsClassificationEnv.make_coord_patch(
+                        image, action_x, action_y, self.patch_size
+                    )
+                elif self.patch_type == 'mask':
+                    patch = PatchSetsClassificationEnv.make_mask_patch(
+                        image, action_x, action_y, self.patch_size
+                    )
+                else:
+                    assert False, self.patch_type
+                self.trajectory['patch'].append(patch.detach().cpu())
+
+                feature_set = self.env_model.encode(patch[None, None])
+                if self.step_count > 0:
+                    feature_set = torch.cat(
+                        [
+                            feature_set,
+                            self.trajectory['feature_set'][-1],
+                        ],
+                        1,
+                    )
+
+                self.trajectory['feature_set'].append(feature_set.detach().cpu())
+
+                feature = self.env_model.pool(feature_set)
+
+                output = self.env_model.decode(feature)
+                self.trajectory['output'].append(output.detach().cpu())
+
+                image = self.data[0]
+                self.patched_area = (
+                    self.patched_area
+                    + self.make_patched_area(
+                        image.shape[1],
+                        image.shape[2],
+                        action_x,
+                        action_y,
+                        self.patch_size,
+                        device,
+                    ).float()
+                )
+                observation = (
+                    self.make_observation(image, self.patched_area).detach().cpu()
+                )
+                self.trajectory['observation'].append(observation)
+
+                loss = F.cross_entropy(
+                    output,
+                    torch.tensor([target], dtype=torch.long, device=device),
+                ).item()
+                self.trajectory['loss'].append(loss)
+
+                probability = output.softmax(1)[0]
+
                 output_advantage = (
                     probability[target]
                     - torch.cat(
                         [probability[:target], probability[target + 1 :]], 0
                     ).max()
                 ).item()
-            else:
-                if probability[target] > self.done_threshold:
-                    output_advantage = 1
-                elif probability.max() > self.done_threshold:
-                    output_advantage = -1
-                else:
-                    assert False
-            reward = output_advantage - self.last_output_advantage
 
-            self.last_output_advantage = output_advantage
-            self.trajectory['reward'].append(reward)
+                reward = output_advantage - self.last_output_advantage
+                self.trajectory['reward'].append(reward)
+                self.last_output_advantage = output_advantage
+            else:
+                observation = self.trajectory['observation'][-1].clone()
+                self.trajectory['observation'].append(observation)
+
+                reward = (
+                    self.trajectory['output'][-1].argmax(1) == target
+                ).item() * 2 - 1
+                self.trajectory['reward'].append(reward)
+
+                self.patch_set_buffer.append(self.trajectory['patch'], target)
+
             self.step_count += 1
             return observation, reward, done, {}
 
@@ -316,21 +298,21 @@ if __name__ == "__main__":
 
     pl.seed_everything(0)
 
+    output_n = 2
+
     env_model = src.env_model.EnvModel(
-        hidden_n=1, feature_n=16, output_n=26, pool_mode='sum'
+        output_n=2, pool_mode='sum', input_n=3, feature_n=16
     )
     summary(env_model)
     env_model.eval()
 
     image_size = 100
     patch_size = {'x': 9, 'y': 8}
-    obs_size = 2
-    done_threshold = 0.3
 
     dataset = [
         (
             torch.rand(1, image_size, image_size) * 100,
-            torch.randint(26, [1]),
+            torch.randint(output_n, [1]),
         )
         for i in range(100)
     ]
@@ -338,19 +320,23 @@ if __name__ == "__main__":
     patch_set_buffer = PatchSetBuffer()
 
     env = PatchSetsClassificationEnv(
-        dataset, env_model, patch_size, 0.5, patch_set_buffer
+        dataset, env_model, patch_size, patch_set_buffer=patch_set_buffer
     )
 
+    print()
+    done_action = (image_size - patch_size['x'] + 1) * (
+        image_size - patch_size['y'] + 1
+    )
     for _ in range(4):
         state = env.reset()
         print(state.shape)
+        print()
+
         action = 0
-        state, reward, done, _ = env.step(action)
-        print(state.shape)
-        print(reward)
-        print(done)
-        action = 1
-        state, reward, done, _ = env.step(action)
-        print(state.shape)
-        print(reward)
-        print(done)
+        for action in [0, 1, done_action, 2, done_action]:
+            state, reward, done, _ = env.step(action)
+            # print(state.shape)
+            # print(reward)
+            # print(done)
+            # print()
+        print('=' * 40)
