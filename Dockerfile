@@ -1,4 +1,3 @@
-# FROM pytorch/pytorch:1.9.0-cuda10.2-cudnn7-runtime
 FROM nvidia/cuda:11.0.3-devel-ubuntu20.04
 
 # Timezone setting
@@ -7,10 +6,13 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
 # Install something
 RUN apt-get update && apt-get install -y --no-install-recommends bash curl fish git nano sudo
 
+RUN rm /usr/bin/python3
+RUN rm /usr/bin/python3.8
+
 # OpenCV
 RUN apt-get update && apt-get install -y --no-install-recommends libopencv-dev
 
-# # Install Python
+# Install Python
 ENV PYTHON_VERSION 3.9
 RUN apt-get update && apt-get install -y --no-install-recommends python${PYTHON_VERSION}
 
