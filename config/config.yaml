@@ -1,119 +1,72 @@
-project_name: charsk74k_resnet
+project_name: charsk74k_recognition
 experiment_name: Default
 
 debug: False
-gpu: ${env:GPU}
-dataset_name: AdobeFontDataset
-# dataset_name: Chars74kImageDataset
+gpu: ${oc.decode:${oc.env:GPU}}
+dataset_name: Chars74kImageDataset
 
-hparams:
-  total_steps_entropy_coef: 0.2
-  start_entropy_coef: 1e-0
-  end_entropy_coef: 1e-3
-  patch_size:
-    x: 25
-    y: 25
+seed: 0
+
+lightning_module:
+  model_name: resnet18
+  pretrained: False
+  num_classes: 10
+  lr: 0.001
+
+data_module:
   batch_size: 64
+  num_workers: 0
+  pin_memory: False
+  path: '/dataset/Chars74k/splitted'
+  image_size: 100
+  k: 0
+  number: True
+  upper: False
+  lower: False
+  good: True
+  bad: True
+  language: English
 
-patch_set_buffer:
-  train:
-    use_n_steps: 10
-  valid:
-    use_n_steps: 1
+trainer:
+  max_epochs: 10000
+  min_epochs: 10
+  gpus: 1
+  precision: 32
+  fast_dev_run: ${debug}
+  profiler: simple
+  weights_summary: full
+  limit_train_batches: 1.0
+  limit_val_batches: 1.0
+  limit_test_batches: 1.0
+  distributed_backend: ~
 
-env:
-  patch_size: ${hparams.patch_size}
-  patch_type: coord
-  done_threshold: 0.99
+model_checkpoint:
+  dirpath: './checkpoints'
+  filename: ~
+  monitor: valid_loss
+  verbose: False
+  save_last: True
+  save_top_k: 3
+  save_weights_only: False
+  mode: min
 
-env_model:
-  # checkpoint_path: /workspace/src/epoch=1062.ckpt
-  input_n: 3
-  feature_n: 64
-  output_n: 26
-  pool_mode: max
+early_stopping:
+  monitor: valid_loss
+  min_delta: 0
+  patience: 100
+  verbose: False
+  mode: min
 
-env_model_trainer:
-  batch_size: ${hparams.batch_size}
-  epochs: 1
-env_model_evaluator:
-  batch_size: ${hparams.batch_size}
+callbacks: []
 
-agent_model:
-  input_n: 2
-  patch_size: ${hparams.patch_size}
-
-agent:
-  gpu: ${gpu}
-  gamma: 0.8
-  update_interval: 1024
-  minibatch_size: ${hparams.batch_size}
-  epochs: 10
-
-experiment:
-  steps: 500_000
-  eval_interval: ${agent.update_interval}
-  eval_n_episodes: 104
-  eval_n_steps: ~
-  train_max_episode_len: 8
-  eval_max_episode_len: 8
-  use_tensorboard: True
-
-optim:
-  env:
-    lr: 1e-3
-    eps: 1e-8
-  agent:
-    lr: 1e-4
-    eps: 1e-8
-
-dataset:
-  train:
-    root: '/dataset/AdobeFontCharImages/splitted'
-    data_type:
-      - 'train_data_0'
-      - 'train_data_1'
-      - 'train_data_2'
-      - 'train_data_3'
-    lower: False
-  valid:
-    root: '/dataset/AdobeFontCharImages/splitted'
-    data_type:
-      - 'train_data_4'
-    lower: False
-  test:
-    root: '/dataset/AdobeFontCharImages/splitted'
-    data_type:
-      - 'test_data'
-    lower: False
-
-  # train:
-  #   root: '/dataset/Chars74k/splitted'
-  #   data_type:
-  #     - 'train_data_0'
-  #     - 'train_data_1'
-  #     - 'train_data_2'
-  #     - 'train_data_3'
-  #   number: True
-  #   upper: False
-  #   lower: False
-  # valid:
-  #   root: '/dataset/Chars74k/splitted'
-  #   data_type:
-  #     - 'train_data_4'
-  #   number: True
-  #   upper: False
-  #   lower: False
-  # test:
-  #   root: '/dataset/Chars74k/splitted'
-  #   data_type:
-  #     - 'test_data'
-  #   number: True
-  #   upper: False
-  #   lower: False
+loggers:
+  - _target_: pytorch_lightning.loggers.TensorBoardLogger
+    save_dir: .
+    name: 'TensorBoard'
+    version: ''
 
 hydra:
   run:
-    dir: ./outputs/${dataset_name}/${experiment_name}/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    dir: ./outputs/${experiment_name}/${dataset_name}/${now:%Y-%m-%d}/${now:%H-%M-%S}
   sweep:
-    dir: ./outputs/${dataset_name}/${experiment_name}/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    dir: ./outputs/${experiment_name}/${dataset_name}/${now:%Y-%m-%d}/${now:%H-%M-%S}

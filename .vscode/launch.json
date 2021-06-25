@@ -11,7 +11,7 @@
             "program": "${file}",
             "console": "integratedTerminal",
             // "args": []
-            "args": ["debug=True", "experiment_name=__debug__", "gpu=0", "agent.update_interval=16", "experiment.eval_interval=16", "experiment.train_max_episode_len=2", "experiment.eval_max_episode_len=2", "hparams.batch_size=2", "agent.epochs=1"]
+            "args": ["debug=True", "experiment_name=__debug__", "gpu=None", "data_module.num_workers=0"]
             // ,"justMyCode": false
         }
     ]
