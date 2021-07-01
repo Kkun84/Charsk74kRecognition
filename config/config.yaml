@@ -46,14 +46,14 @@ model_checkpoint:
   monitor: valid_loss
   verbose: False
   save_last: True
-  save_top_k: 3
+  save_top_k: 1
   save_weights_only: False
   mode: min
 
 early_stopping:
   monitor: valid_loss
   min_delta: 0
-  patience: 100
+  patience: 30
   verbose: False
   mode: min
 
