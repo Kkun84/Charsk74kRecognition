@@ -67,6 +67,6 @@ loggers:
 
 hydra:
   run:
-    dir: ./outputs/${experiment_name}/${dataset_name}/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    dir: ./outputs/${experiment_name}/${dataset_name}/${now:%Y-%m-%d}/${now:%H-%M-%S}-single
   sweep:
-    dir: ./outputs/${experiment_name}/${dataset_name}/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    dir: ./outputs/${experiment_name}/${dataset_name}/${now:%Y-%m-%d}/${now:%H-%M-%S}-multiple
