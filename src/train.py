@@ -1,5 +1,6 @@
 import shutil
-from logging import getLogger, FileHandler
+from logging import INFO as LOG_LEVEL, Logger
+from logging import FileHandler, Formatter, StreamHandler, getLogger
 from pathlib import Path
 
 import hydra
@@ -12,13 +13,16 @@ from plmodule import DataModule, LightningModule
 
 
 logger = getLogger(__name__)
+logger.setLevel(LOG_LEVEL)
 
 
 @hydra.main(config_path='../config', config_name='config.yaml')
 def main(config) -> None:
     all_done = False
     try:
-        logger.info('\n' + OmegaConf.to_yaml(config))
+        set_pytorch_lightning_logging(logger)
+
+        logger.info('Loaded "config.yaml"\n' + OmegaConf.to_yaml(config))
 
         shutil.copytree(
             Path(hydra.utils.get_original_cwd()) / 'src',
@@ -47,7 +51,10 @@ def main(config) -> None:
 
         trainer.fit(model=lightning_module, datamodule=data_module)
 
-        trainer.test(model=lightning_module, datamodule=data_module, ckpt_path='best')
+        results = trainer.test(
+            model=lightning_module, datamodule=data_module, ckpt_path='best'
+        )
+        logger.info(f'Test results: {results}')
 
         logger.info('All done.')
         all_done = True
@@ -60,6 +67,23 @@ def main(config) -> None:
                     f'Rename directory name. "{cwd_path}" -> "{cwd_path}{suffix}"'
                 )
                 cwd_path.rename(str(cwd_path) + suffix)
+
+
+def set_pytorch_lightning_logging(hydra_logger: Logger):
+    import sys
+
+    stream_handlers = [
+        i for i in hydra_logger.root.handlers if type(i) == StreamHandler
+    ]
+    assert len(stream_handlers) == 1
+    file_handlers = [i for i in hydra_logger.root.handlers if type(i) == FileHandler]
+    assert len(file_handlers) == 1
+
+    pl_logger = getLogger('pytorch_lightning')
+    pl_logger.setLevel(LOG_LEVEL)
+
+    pl_logger.addHandler(file_handlers[0])
+    pl_logger.addHandler(stream_handlers[0])
 
 
 if __name__ == "__main__":
