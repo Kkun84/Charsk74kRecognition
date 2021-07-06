@@ -50,8 +50,8 @@ class LightningModule(pl.LightningModule):
         items = self._step(batch)
         loss = items['loss']
         accuracy = items['accuracy']
-        self.log('train_loss', loss, on_step=True)
-        self.log('train_accuracy', accuracy, on_step=True, prog_bar=True)
+        self.log('metrics/train_loss', loss, on_step=True)
+        self.log('metrics/train_accuracy', accuracy, on_step=True, prog_bar=True)
         return loss
 
     def validation_step(
@@ -88,15 +88,15 @@ class LightningModule(pl.LightningModule):
         items = self._epoch_end(step_outputs)
         loss = items['loss']
         accuracy = items['accuracy']
-        self.log('valid_loss', loss, prog_bar=True)
-        self.log('valid_accuracy', accuracy, prog_bar=True)
+        self.log('metrics/valid_loss', loss, prog_bar=True)
+        self.log('metrics/valid_accuracy', accuracy, prog_bar=True)
 
     def test_epoch_end(self, step_outputs: list[dict[str, Any]]):
         items = self._epoch_end(step_outputs)
         loss = items['loss']
         accuracy = items['accuracy']
-        self.log('test_loss', loss)
-        self.log('test_accuracy', accuracy)
+        self.log('metrics/test_loss', loss)
+        self.log('metrics/test_accuracy', accuracy)
 
 
 if __name__ == '__main__':

@@ -43,7 +43,7 @@ trainer:
 model_checkpoint:
   dirpath: './checkpoints'
   filename: ~
-  monitor: valid_loss
+  monitor: metrics/valid_loss
   verbose: False
   save_last: True
   save_top_k: 1
@@ -51,7 +51,7 @@ model_checkpoint:
   mode: min
 
 early_stopping:
-  monitor: valid_loss
+  monitor: metrics/valid_loss
   min_delta: 0
   patience: 30
   verbose: False
