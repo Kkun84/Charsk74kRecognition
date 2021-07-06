@@ -1,6 +1,6 @@
 import shutil
 from logging import INFO as LOG_LEVEL, Logger
-from logging import FileHandler, Formatter, StreamHandler, getLogger
+from logging import FileHandler, StreamHandler, getLogger
 from pathlib import Path
 
 import hydra
