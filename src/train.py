@@ -16,6 +16,12 @@ logger = getLogger(__name__)
 logger.setLevel(LOG_LEVEL)
 
 
+def get_command() -> str:
+    import sys
+
+    return ' '.join(sys.argv)
+
+
 @hydra.main(config_path='../config', config_name='config.yaml')
 def main(config) -> None:
     all_done = False
@@ -28,6 +34,9 @@ def main(config) -> None:
             Path(hydra.utils.get_original_cwd()) / 'src',
             Path.cwd() / 'snapshot' / 'src',
         )
+
+        with open('command.txt', 'w') as file:
+            file.write(get_command())
 
         pl.seed_everything(config.seed)
 
