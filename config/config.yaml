@@ -15,6 +15,7 @@ lightning_module:
 
 data_module:
   batch_size: 64
+  shuffle: True
   num_workers: 0
   pin_memory: False
   path: '/dataset/Chars74k/splitted'

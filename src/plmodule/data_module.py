@@ -24,6 +24,7 @@ class DataModule(pl.LightningDataModule):
         self,
         *,
         batch_size: int,
+        shuffle: bool,
         num_workers: int,
         pin_memory: bool,
         path: Union[str, Path],
@@ -39,6 +40,7 @@ class DataModule(pl.LightningDataModule):
         super().__init__()
 
         self.batch_size = batch_size
+        self.shuffle = shuffle
         self.num_workers = num_workers
         self.pin_memory = pin_memory
 
@@ -100,6 +102,7 @@ class DataModule(pl.LightningDataModule):
         return DataLoader(
             self.train_dataset,
             batch_size=self.batch_size,
+            shuffle=self.shuffle,
             num_workers=self.num_workers,
             pin_memory=self.pin_memory,
         )
@@ -108,6 +111,7 @@ class DataModule(pl.LightningDataModule):
         return DataLoader(
             self.val_dataset,
             batch_size=self.batch_size,
+            shuffle=self.shuffle,
             num_workers=self.num_workers,
             pin_memory=self.pin_memory,
         )
@@ -116,6 +120,7 @@ class DataModule(pl.LightningDataModule):
         return DataLoader(
             self.test_dataset,
             batch_size=self.batch_size,
+            shuffle=self.shuffle,
             num_workers=self.num_workers,
             pin_memory=self.pin_memory,
         )
