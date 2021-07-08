@@ -69,6 +69,8 @@ def main(config) -> None:
 
         logger.info('All done.')
         all_done = True
+    except Exception:
+        logger.exception('main process')
     finally:
         if all_done == False:
             cwd_path = Path.cwd()
