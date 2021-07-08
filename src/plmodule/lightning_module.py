@@ -34,8 +34,9 @@ class LightningModule(pl.LightningModule):
         optimizer = torch.optim.Adam(self.model.parameters(), lr=self.hparams.lr)
         return [optimizer], []
 
-    def forward(self, image_batch: Tensor):
-        return self.model(image_batch)
+    def forward(self, batch: Tensor):
+        x, y = batch
+        return self.model(x), y
 
     def _step(self, batch: Sequence[Tensor]) -> dict[str, Any]:
         x = batch[0]
