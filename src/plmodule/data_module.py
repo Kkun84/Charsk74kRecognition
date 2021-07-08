@@ -55,6 +55,12 @@ class DataModule(pl.LightningDataModule):
         self.bad = bad
 
         self.dims = (3, 100, 100)
+        self.num_classes = (
+            (10 if self.number else 0)
+            + (26 if self.upper else 0)
+            + (26 if self.lower else 0)
+        )
+        assert self.num_classes > 0
 
         self.transform = transforms.Compose(
             [transforms.Resize([image_size, image_size]), transforms.ToTensor()]

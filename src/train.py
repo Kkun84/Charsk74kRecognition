@@ -58,6 +58,8 @@ def main(config) -> None:
 
         data_module = DataModule(**config.data_module)
 
+        assert lightning_module.hparams.num_classes == data_module.num_classes
+
         trainer.fit(model=lightning_module, datamodule=data_module)
 
         results = trainer.test(
