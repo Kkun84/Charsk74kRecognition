@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Optional, Union
 
 import pytorch_lightning as pl
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
 
 
@@ -99,31 +99,40 @@ class DataModule(pl.LightningDataModule):
             )
 
     def train_dataloader(self) -> DataLoader:
-        return DataLoader(
-            self.train_dataset,
-            batch_size=self.batch_size,
-            shuffle=self.shuffle,
-            num_workers=self.num_workers,
-            pin_memory=self.pin_memory,
-        )
+        return self.make_dataloader(self.train_dataset)
 
     def val_dataloader(self) -> DataLoader:
+        return self.make_dataloader(self.val_dataset)
+
+    def test_dataloader(self) -> DataLoader:
+        return self.make_dataloader(self.test_dataset)
+
+    def make_dataloader(self, dataset: Dataset) -> DataLoader:
         return DataLoader(
-            self.val_dataset,
+            dataset,
             batch_size=self.batch_size,
             shuffle=self.shuffle,
             num_workers=self.num_workers,
             pin_memory=self.pin_memory,
         )
 
-    def test_dataloader(self) -> DataLoader:
-        return DataLoader(
-            self.test_dataset,
-            batch_size=self.batch_size,
-            shuffle=self.shuffle,
-            num_workers=self.num_workers,
-            pin_memory=self.pin_memory,
-        )
+    def get_dataset(self, sample_type: str) -> Dataset:
+        return {
+            'train': self.train_dataset,
+            'valid': self.val_dataset,
+            'validation': self.val_dataset,
+            'val': self.val_dataset,
+            'test': self.test_dataset,
+        }[sample_type]
+
+    def get_dataloader(self, sample_type: str) -> DataLoader:
+        return {
+            'train': self.train_dataloader,
+            'valid': self.val_dataloader,
+            'validation': self.val_dataloader,
+            'val': self.val_dataloader,
+            'test': self.test_dataloader,
+        }[sample_type]()
 
 
 if __name__ == "__main__":
