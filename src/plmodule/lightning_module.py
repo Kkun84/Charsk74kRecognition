@@ -1,4 +1,4 @@
-from typing import Any, Callable, Sequence
+from typing import Any, Callable, Sequence, Union
 
 import pytorch_lightning as pl
 import torch
@@ -34,9 +34,16 @@ class LightningModule(pl.LightningModule):
         optimizer = torch.optim.Adam(self.model.parameters(), lr=self.hparams.lr)
         return [optimizer], []
 
-    def forward(self, batch: Tensor):
-        x, y = batch
-        return self.model(x), y
+    def forward(self, batch: Union[Tensor, tuple[Tensor, dict[str, Any]]]):
+        if isinstance(batch, Tensor):
+            x = batch
+            return self.model(x)
+        elif isinstance(batch, tuple):
+            x, y = batch
+            assert isinstance(x, Tensor)
+            assert isinstance(y, dict)
+            return self.model(x), y
+        assert False, type(batch)
 
     def _step(self, batch: Sequence[Tensor]) -> dict[str, Any]:
         x = batch[0]
