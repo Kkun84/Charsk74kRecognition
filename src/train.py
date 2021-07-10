@@ -62,9 +62,7 @@ def main(config) -> None:
 
         trainer.fit(model=lightning_module, datamodule=data_module)
 
-        results = trainer.test(
-            model=lightning_module, datamodule=data_module, ckpt_path='best'
-        )
+        results = trainer.test()
         logger.info(f'Test results: {results}')
 
         logger.info('All done.')
